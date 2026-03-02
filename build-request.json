@@ -1,0 +1,58 @@
+{
+  "kind": "build_request",
+  "title": "Improve GST Calculation Precision",
+  "projectName": "ARAA Trade Lubes",
+  "priority": "normal",
+  "requirements": [
+    {
+      "id": "REQ-1",
+      "text": "Improve GST calculation precision in the backend Motoko actor to eliminate rounding errors. Use high-precision integer arithmetic (paise-level) throughout all GST computation steps — including CGST, SGST, and IGST — ensuring that intermediate values are never truncated or rounded prematurely. Final amounts should only be rounded at the very last step before storage.",
+      "target": "backend",
+      "source": {
+        "messageIds": [
+          "msg-last"
+        ],
+        "quotes": [
+          "ok gst needs for precise I guess"
+        ]
+      },
+      "acceptanceCriteria": [
+        "CGST + SGST amounts always sum exactly to the total GST amount without off-by-one paise errors",
+        "IGST amount matches the expected GST rate applied to the taxable value with no rounding discrepancy",
+        "Intermediate GST computation values are not truncated mid-calculation",
+        "Invoice totals stored in the backend match the amounts displayed on the invoice to the last paise"
+      ]
+    },
+    {
+      "id": "REQ-2",
+      "text": "Improve GST calculation precision in the frontend gstUtils.ts utility to exactly mirror the updated backend logic. Ensure all per-line-item and full-invoice GST summary calculations use integer paise arithmetic throughout, rounding only at the final display step. The frontend computed totals must match backend-stored values exactly.",
+      "target": "frontend",
+      "source": {
+        "messageIds": [
+          "msg-last"
+        ],
+        "quotes": [
+          "ok gst needs for precise I guess"
+        ]
+      },
+      "acceptanceCriteria": [
+        "Frontend GST summary totals (CGST, SGST, IGST, taxable amount, grand total) match backend-stored values exactly for all invoices",
+        "No floating-point arithmetic is used in intermediate GST calculation steps in gstUtils.ts",
+        "InvoicesTab.tsx and InvoiceDetails.tsx display GST values consistent with backend data"
+      ]
+    }
+  ],
+  "constraints": [
+    "Do not change the invoice or transaction data schema in a way that would corrupt existing stored records",
+    "GST calculation logic must remain consistent between frontend (gstUtils.ts) and backend (main.mo)"
+  ],
+  "nonGoals": [
+    "Changing the GST rate structure or tax categories",
+    "Adding new invoice fields or UI layout changes",
+    "Modifying authentication or user profile features"
+  ],
+  "imageRequirements": {
+    "required": [],
+    "edits": []
+  }
+}

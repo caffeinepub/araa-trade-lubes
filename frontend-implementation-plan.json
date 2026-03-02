@@ -1,0 +1,33 @@
+{
+  "kind": "implementation_plan",
+  "version": "1.0",
+  "title": "Improve GST Calculation Precision",
+  "requirements": [
+    {
+      "id": "REQ-2",
+      "summary": "Improve GST calculation precision in frontend gstUtils.ts to use integer paise arithmetic throughout, matching backend logic exactly",
+      "acceptanceCriteria": [
+        "Frontend GST summary totals (CGST, SGST, IGST, taxable amount, grand total) match backend-stored values exactly for all invoices",
+        "No floating-point arithmetic is used in intermediate GST calculation steps in gstUtils.ts",
+        "InvoicesTab.tsx and InvoiceDetails.tsx display GST values consistent with backend data"
+      ],
+      "file_operations": [
+        {
+          "path": "frontend/src/lib/gstUtils.ts",
+          "operation": "modify",
+          "description": "Refactor all GST calculation functions to use high-precision integer paise arithmetic throughout. Replace any floating-point operations with integer calculations that multiply amounts by 100 to work in paise, perform all intermediate calculations in paise (including tax rate applications), and only round at the final step before converting back to rupees. Ensure CGST and SGST sum exactly to total GST with no off-by-one paise errors. Mirror the backend's computation logic exactly, including the treatment of HSN/SAC codes for determining intra-state vs inter-state supply. Update calculateLineItemGst and calculateInvoiceGstSummary to use integer arithmetic exclusively, eliminating premature truncation or rounding in intermediate steps."
+        },
+        {
+          "path": "frontend/src/components/InvoicesTab.tsx",
+          "operation": "modify",
+          "description": "Update the invoice creation and display logic to use the revised gstUtils functions that now perform integer paise arithmetic. Verify that the GST summary totals displayed in the invoice table (CGST, SGST, IGST, taxable amount, grand total) match the backend-stored values exactly by using the backend GstBreakup data where available. Ensure no floating-point arithmetic is used when computing or displaying GST amounts. Test that the displayed totals align with backend records to the last paise."
+        },
+        {
+          "path": "frontend/src/components/InvoiceDetails.tsx",
+          "operation": "modify",
+          "description": "Update the invoice details dialog to display GST breakdowns using the backend-stored GstBreakup data directly, ensuring that CGST, SGST, IGST, taxable amount, and grand total values shown in the dialog match the backend records exactly. Remove any client-side GST recalculation in this component that might introduce rounding discrepancies. Ensure all displayed amounts are formatted consistently using the integer paise values from the backend, converted to rupees only at the final display step."
+        }
+      ]
+    }
+  ]
+}

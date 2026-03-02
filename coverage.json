@@ -1,0 +1,52 @@
+{
+  "kind": "coverage_report",
+  "version": "1.0",
+  "generatedAt": "2026-03-02T18:56:23.197Z",
+  "sources": {
+    "buildRequest": true,
+    "implementationPlan": true
+  },
+  "requirements": {
+    "total": 2,
+    "implemented": 1,
+    "items": [
+      {
+        "id": "REQ-1",
+        "summary": "Improve GST calculation precision in the backend Motoko actor to eliminate rounding errors. Use high-precision integer arithmetic (paise-level) throughout all GST computation steps — including CGST, SGST, and IGST — ensuring that intermediate values are never truncated or rounded prematurely. Final amounts should only be rounded at the very last step before storage.",
+        "status": "unknown",
+        "plannedFiles": [],
+        "matchedFiles": []
+      },
+      {
+        "id": "REQ-2",
+        "summary": "Improve GST calculation precision in the frontend gstUtils.ts utility to exactly mirror the updated backend logic. Ensure all per-line-item and full-invoice GST summary calculations use integer paise arithmetic throughout, rounding only at the final display step. The frontend computed totals must match backend-stored values exactly.",
+        "status": "implemented",
+        "plannedFiles": [
+          "frontend/src/lib/gstUtils.ts",
+          "frontend/src/components/InvoicesTab.tsx",
+          "frontend/src/components/InvoiceDetails.tsx"
+        ],
+        "matchedFiles": [
+          "frontend/src/lib/gstUtils.ts",
+          "frontend/src/components/InvoicesTab.tsx",
+          "frontend/src/components/InvoiceDetails.tsx"
+        ]
+      }
+    ]
+  },
+  "changedFiles": [
+    "backend/main.mo",
+    "build-request.json",
+    "feature_evidence.json",
+    "frontend-file-summaries.txt",
+    "frontend-implementation-plan.json",
+    "frontend/src/components/InvoiceDetails.tsx",
+    "frontend/src/components/InvoicesTab.tsx",
+    "frontend/src/components/ProductsTab.tsx",
+    "frontend/src/lib/gstUtils.ts",
+    "project_state.json",
+    "scratch/component-selection.json",
+    "spec.md",
+    "spec_vs_diff_report.json"
+  ]
+}

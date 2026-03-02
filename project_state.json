@@ -1,0 +1,42 @@
+{
+  "schemaVersion": "1.0.0",
+  "projectStateVersion": 3,
+  "summary": "Invoice/accounting app with GST calculation features deployed on Internet Computer blockchain. User wants more precise GST calculations.",
+  "architectural_notes": [
+    "App is deployed on Internet Computer blockchain (canister-based); data persists across code updates"
+  ],
+  "known_issues": [
+    "GST calculation lacks sufficient precision — needs improvement"
+  ],
+  "isFixRequest": true,
+  "existing_features": [
+    {
+      "id": "feature-improve-gst-calculation-precision-in-the-frontend-gstutils-ts-utility-to-exactly-mirror-the-updated-backend-logic-ensure-all-per-line-item-and-full-invoice-gst-summary-calculations-use-integer-paise-arithmetic-throughout-rounding-only-at-the-final-display-step-the-frontend-computed-totals-must-match-backend-stored-values-exactly",
+      "title": "Improve GST calculation precision in the frontend gstUtils.ts utility to exactly mirror the updated backend logic. Ensure all per-line-item and full-invoice GST summary calculations use integer paise arithmetic throughout, rounding only at the final display step. The frontend computed totals must match backend-stored values exactly.",
+      "reqIds": [
+        "REQ-2"
+      ],
+      "version": 1
+    }
+  ],
+  "new_feature_requests": [
+    {
+      "id": "AR-1",
+      "summary": "Improve GST calculation precision",
+      "reqIds": [],
+      "status": "pending"
+    },
+    {
+      "id": "AR-2",
+      "summary": "Improve GST calculation precision in the backend Motoko actor to eliminate rounding errors. Use high-precision integer arithmetic (paise-level) throughout all GST computation steps — including CGST, SGST, and IGST — ensuring that intermediate values are never truncated or rounded prematurely. Final amounts should only be rounded at the very last step before storage.",
+      "reqIds": [
+        "REQ-1"
+      ],
+      "status": "pending"
+    }
+  ],
+  "gameProjectType": "none",
+  "projectName": "ARAA Trade Lubes",
+  "clarification_mode": "instant",
+  "clarification_rounds": 0
+}

@@ -1,0 +1,18 @@
+{
+  "kind": "spec_vs_diff_report",
+  "version": "1.0",
+  "generatedAt": "2026-03-02T18:56:23.195Z",
+  "summary": "The diff implements both REQ-1 (backend paise-level integer arithmetic in main.mo) and REQ-2 (frontend gstUtils.ts BigInt arithmetic mirroring backend logic, with InvoicesTab.tsx and InvoiceDetails.tsx updated to use backend-stored breakups). All major acceptance criteria appear to be addressed. No hallucinated features were detected.",
+  "missing_requirements": [],
+  "hallucinated_features": [],
+  "confidence": 0.88,
+  "changed_files": [
+    "backend/main.mo",
+    "frontend-file-summaries.txt",
+    "frontend/src/components/InvoiceDetails.tsx",
+    "frontend/src/components/InvoicesTab.tsx",
+    "frontend/src/components/ProductsTab.tsx",
+    "frontend/src/lib/gstUtils.ts",
+    "project_state.json"
+  ]
+}
