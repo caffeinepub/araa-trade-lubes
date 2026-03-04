@@ -1,0 +1,194 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --radius: 0.75rem;
+
+    /* Bright, vibrant light mode with high saturation */
+    --background: 0.99 0.01 200;
+    --foreground: 0.12 0.03 250;
+
+    --card: 1 0 0;
+    --card-foreground: 0.12 0.03 250;
+
+    --popover: 1 0 0;
+    --popover-foreground: 0.12 0.03 250;
+
+    /* Vibrant teal primary - more saturated */
+    --primary: 0.58 0.2 195;
+    --primary-foreground: 0.99 0 0;
+
+    /* Bright emerald green secondary */
+    --secondary: 0.72 0.18 155;
+    --secondary-foreground: 0.12 0.03 250;
+
+    --muted: 0.96 0.02 200;
+    --muted-foreground: 0.48 0.04 230;
+
+    /* Vibrant tangerine orange accent */
+    --accent: 0.75 0.2 45;
+    --accent-foreground: 0.12 0.03 250;
+
+    /* Bright magenta for special highlights */
+    --highlight: 0.65 0.22 330;
+    --highlight-foreground: 0.99 0 0;
+
+    /* Bright red destructive */
+    --destructive: 0.55 0.25 20;
+    --destructive-foreground: 0.99 0 0;
+
+    --border: 0.9 0.03 200;
+    --input: 0.9 0.03 200;
+    --ring: 0.58 0.2 195;
+
+    /* Vibrant chart colors with high saturation */
+    --chart-1: 0.58 0.2 195;
+    --chart-2: 0.68 0.18 155;
+    --chart-3: 0.75 0.2 45;
+    --chart-4: 0.62 0.22 260;
+    --chart-5: 0.68 0.2 310;
+
+    /* Success and warning colors */
+    --success: 0.7 0.18 145;
+    --success-foreground: 0.12 0.03 250;
+    --warning: 0.78 0.18 80;
+    --warning-foreground: 0.12 0.03 250;
+
+    --sidebar: 0.99 0.01 200;
+    --sidebar-foreground: 0.12 0.03 250;
+    --sidebar-primary: 0.58 0.2 195;
+    --sidebar-primary-foreground: 0.99 0 0;
+    --sidebar-accent: 0.96 0.02 200;
+    --sidebar-accent-foreground: 0.12 0.03 250;
+    --sidebar-border: 0.9 0.03 200;
+    --sidebar-ring: 0.58 0.2 195;
+  }
+
+  .dark {
+    /* Bright, vibrant dark mode with high saturation */
+    --background: 0.15 0.04 240;
+    --foreground: 0.98 0.01 200;
+
+    --card: 0.2 0.04 240;
+    --card-foreground: 0.98 0.01 200;
+
+    --popover: 0.18 0.04 240;
+    --popover-foreground: 0.98 0.01 200;
+
+    /* Bright teal primary for dark mode - highly saturated */
+    --primary: 0.68 0.22 195;
+    --primary-foreground: 0.1 0.03 240;
+
+    /* Bright emerald secondary for dark mode */
+    --secondary: 0.75 0.2 155;
+    --secondary-foreground: 0.1 0.03 240;
+
+    --muted: 0.25 0.04 240;
+    --muted-foreground: 0.72 0.04 210;
+
+    /* Bright tangerine accent for dark mode */
+    --accent: 0.78 0.22 45;
+    --accent-foreground: 0.1 0.03 240;
+
+    /* Bright magenta for special highlights */
+    --highlight: 0.7 0.24 330;
+    --highlight-foreground: 0.1 0.03 240;
+
+    /* Bright red destructive for dark mode */
+    --destructive: 0.58 0.26 20;
+    --destructive-foreground: 0.98 0.01 200;
+
+    --border: 0.3 0.05 240;
+    --input: 0.3 0.05 240;
+    --ring: 0.68 0.22 195;
+
+    /* Vibrant chart colors for dark mode */
+    --chart-1: 0.68 0.22 195;
+    --chart-2: 0.72 0.2 155;
+    --chart-3: 0.78 0.22 45;
+    --chart-4: 0.68 0.24 260;
+    --chart-5: 0.72 0.22 310;
+
+    /* Success and warning colors for dark mode */
+    --success: 0.72 0.2 145;
+    --success-foreground: 0.1 0.03 240;
+    --warning: 0.8 0.2 80;
+    --warning-foreground: 0.1 0.03 240;
+
+    --sidebar: 0.18 0.04 240;
+    --sidebar-foreground: 0.98 0.01 200;
+    --sidebar-primary: 0.68 0.22 195;
+    --sidebar-primary-foreground: 0.1 0.03 240;
+    --sidebar-accent: 0.25 0.04 240;
+    --sidebar-accent-foreground: 0.98 0.01 200;
+    --sidebar-border: 0.3 0.05 240;
+    --sidebar-ring: 0.68 0.22 195;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+
+  /* Enhanced scrollbar styling */
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  ::-webkit-scrollbar-track {
+    @apply bg-muted;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply bg-primary/40 rounded-lg;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-primary/60;
+  }
+}
+
+/* Custom utility classes for vibrant theme */
+@layer utilities {
+  .gradient-primary {
+    background: linear-gradient(
+      135deg,
+      oklch(var(--primary)) 0%,
+      oklch(var(--secondary)) 100%
+    );
+  }
+
+  .gradient-accent {
+    background: linear-gradient(
+      135deg,
+      oklch(var(--accent)) 0%,
+      oklch(var(--highlight)) 100%
+    );
+  }
+
+  .text-gradient {
+    background: linear-gradient(
+      135deg,
+      oklch(var(--primary)) 0%,
+      oklch(var(--accent)) 100%
+    );
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .card-hover {
+    @apply transition-all duration-300 hover:shadow-lg hover:scale-[1.02];
+  }
+
+  .btn-vibrant {
+    @apply bg-gradient-to-r from-primary to-secondary text-primary-foreground hover:opacity-90 transition-opacity;
+  }
+}
