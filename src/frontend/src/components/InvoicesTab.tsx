@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Calendar } from "@/components/ui/calendar";
 import {
   Dialog,
   DialogContent,
@@ -20,6 +21,11 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import {
   Table,
   TableBody,
   TableCell,
@@ -28,7 +34,15 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { useQueryClient } from "@tanstack/react-query";
-import { Eye, FileText, Loader2, Plus, Trash2 } from "lucide-react";
+import { format } from "date-fns";
+import {
+  CalendarIcon,
+  Eye,
+  FileText,
+  Loader2,
+  Plus,
+  Trash2,
+} from "lucide-react";
 import React, { useState } from "react";
 import { toast } from "sonner";
 import type { Invoice, Product } from "../backend";
@@ -41,7 +55,6 @@ import {
   useGetAllProducts,
   useRecordPayment,
 } from "../hooks/useQueries";
-import { formatCurrency } from "../lib/currencyUtils";
 import {
   type GstLineItem,
   calculateLineItemGst,
@@ -56,8 +69,6 @@ function nextLineItemId() {
   lineItemCounter += 1;
   return lineItemCounter;
 }
-
-const todayStr = () => new Date().toISOString().split("T")[0];
 
 interface InvoiceLineItem {
   uid: number;
@@ -90,9 +101,9 @@ export default function InvoicesTab() {
   const [lineItems, setLineItems] = useState<InvoiceLineItem[]>([
     { uid: nextLineItemId(), productId: 0n, quantity: 1, price: 0 },
   ]);
-  const [invoiceDate, setInvoiceDate] = useState<string>(todayStr());
+  const [invoiceDate, setInvoiceDate] = useState<Date>(new Date());
   const [paymentAmount, setPaymentAmount] = useState<string>("");
-  const [paymentDate, setPaymentDate] = useState<string>(todayStr());
+  const [paymentDate, setPaymentDate] = useState<Date>(new Date());
 
   const getCustomerName = (customerId: bigint) => {
     const customer = customers.find((c) => c.id === customerId);
@@ -139,8 +150,6 @@ export default function InvoicesTab() {
     updatedItems[index] = {
       ...updatedItems[index],
       productId: product ? product.id : 0n,
-      // price in rupees for display; backend stores base in paise
-      // product.price is already the base price — display it as-is
       price: product ? Number(product.price) / 100 : 0,
     };
     setLineItems(updatedItems);
@@ -158,10 +167,6 @@ export default function InvoicesTab() {
     setLineItems(updatedItems);
   };
 
-  /**
-   * Convert inclusive price (rupees) to base paise for backend/calculation.
-   * Backend expects taxable base price (pre-GST) in paise.
-   */
   const inclusiveRupeesToBasePaise = (
     inclusiveRupees: number,
     taxRate: bigint,
@@ -170,19 +175,14 @@ export default function InvoicesTab() {
     return inclusivePriceToBase(inclusivePaise, taxRate);
   };
 
-  /**
-   * Build GstLineItem array from current form state for preview.
-   * Prices entered by user are inclusive — back-calculate base for calculation.
-   */
   const buildGstLineItems = (): GstLineItem[] => {
     return lineItems
       .filter((item) => item.productId !== 0n)
       .map((item) => {
         const product = getProductById(item.productId);
         const taxRate = product ? product.taxRate : 0n;
-        // For preview: use inclusive price as-is in gstUtils which will back-calc
         return {
-          price: BigInt(Math.round(item.price * 100)), // inclusive paise per unit
+          price: BigInt(Math.round(item.price * 100)),
           quantity: BigInt(item.quantity),
           taxRate,
           hsnSacCode: product ? product.hsnSacCode : "",
@@ -206,7 +206,6 @@ export default function InvoicesTab() {
             sgst += b.sgst;
             igst += b.igst;
           }
-          // Grand total = sum of inclusive prices entered (price * qty)
           const enteredTotal = items.reduce(
             (sum, item) => sum + item.price * item.quantity,
             0n,
@@ -242,8 +241,6 @@ export default function InvoicesTab() {
         items: validItems.map((item) => {
           const product = getProductById(item.productId);
           const taxRate = product ? product.taxRate : 0n;
-          // Send back-calculated BASE price to backend (pre-GST paise)
-          // Backend will add GST on top of this base, giving the inclusive total
           const basePaise = inclusiveRupeesToBasePaise(item.price, taxRate);
           return {
             productId: item.productId,
@@ -251,7 +248,7 @@ export default function InvoicesTab() {
             price: basePaise,
           };
         }),
-        invoiceDate: invoiceDate ? new Date(invoiceDate) : undefined,
+        invoiceDate: invoiceDate,
       });
       toast.success("Invoice created successfully");
       setIsAddDialogOpen(false);
@@ -259,7 +256,7 @@ export default function InvoicesTab() {
       setLineItems([
         { uid: nextLineItemId(), productId: 0n, quantity: 1, price: 0 },
       ]);
-      setInvoiceDate(todayStr());
+      setInvoiceDate(new Date());
       queryClient.invalidateQueries({ queryKey: ["invoices"] });
     } catch (error) {
       console.error("Failed to create invoice:", error);
@@ -280,7 +277,6 @@ export default function InvoicesTab() {
     }
   };
 
-  /** Calculate total amount already paid against a specific invoice */
   const getPaidAmountForInvoice = (invoiceId: bigint): bigint => {
     return allPayments
       .filter((p) => p.invoiceId === invoiceId)
@@ -295,7 +291,6 @@ export default function InvoicesTab() {
       return;
     }
 
-    // Warn if overpaying, but don't block
     const alreadyPaidPaise = getPaidAmountForInvoice(selectedInvoice.id);
     const remainingPaise = selectedInvoice.total - alreadyPaidPaise;
     const enteredPaise = BigInt(Math.round(parsedAmount * 100));
@@ -306,21 +301,19 @@ export default function InvoicesTab() {
     }
 
     try {
-      // paymentAmount entered in rupees; convert to paise
       const amountPaise = BigInt(Math.round(parsedAmount * 100));
       await recordPaymentMutation.mutateAsync({
         invoiceId: selectedInvoice.id,
         amount: amountPaise,
-        paymentDate: paymentDate ? new Date(paymentDate) : undefined,
+        paymentDate: paymentDate,
       });
       toast.success(
         `Payment of ₹${parsedAmount.toFixed(2)} recorded for Invoice #${String(selectedInvoice.id)}`,
       );
       setIsPaymentDialogOpen(false);
       setPaymentAmount("");
-      setPaymentDate(todayStr());
+      setPaymentDate(new Date());
       setSelectedInvoice(null);
-      // Invalidate and force-refetch all related queries
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["invoices"] }),
         queryClient.invalidateQueries({ queryKey: ["payments"] }),
@@ -343,7 +336,7 @@ export default function InvoicesTab() {
 
   const openPaymentDialog = (invoice: Invoice) => {
     setSelectedInvoice(invoice);
-    setPaymentDate(todayStr());
+    setPaymentDate(new Date());
     setIsPaymentDialogOpen(true);
   };
 
@@ -357,9 +350,6 @@ export default function InvoicesTab() {
     setIsDeleteDialogOpen(true);
   };
 
-  /**
-   * Format invoice total (stored in paise) to INR display string.
-   */
   const formatInvoiceTotal = (total: bigint): string => {
     return formatPaiseToINR(total);
   };
@@ -485,7 +475,7 @@ export default function InvoicesTab() {
         open={isAddDialogOpen}
         onOpenChange={(open) => {
           setIsAddDialogOpen(open);
-          if (!open) setInvoiceDate(todayStr());
+          if (!open) setInvoiceDate(new Date());
         }}
       >
         <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
@@ -512,17 +502,29 @@ export default function InvoicesTab() {
               </select>
             </div>
 
-            {/* Invoice Date */}
+            {/* Invoice Date Picker */}
             <div className="space-y-2">
-              <Label htmlFor="invoiceDate">Invoice Date</Label>
-              <input
-                id="invoiceDate"
-                data-ocid="invoice.invoice_date.input"
-                type="date"
-                value={invoiceDate}
-                onChange={(e) => setInvoiceDate(e.target.value)}
-                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring"
-              />
+              <Label>Invoice Date</Label>
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button
+                    data-ocid="invoice.invoice_date.input"
+                    variant="outline"
+                    className="w-full justify-start text-left font-normal gap-2"
+                  >
+                    <CalendarIcon className="h-4 w-4" />
+                    {format(invoiceDate, "dd MMM yyyy")}
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-auto p-0" align="start">
+                  <Calendar
+                    mode="single"
+                    selected={invoiceDate}
+                    onSelect={(date) => date && setInvoiceDate(date)}
+                    initialFocus
+                  />
+                </PopoverContent>
+              </Popover>
             </div>
 
             {/* Line Items */}
@@ -537,7 +539,6 @@ export default function InvoicesTab() {
               {lineItems.map((item, index) => {
                 const product = getProductById(item.productId);
                 const taxRate = product ? product.taxRate : 0n;
-                // Live breakdown for this line item
                 const liveBreakup =
                   item.productId !== 0n && item.price > 0
                     ? calculateLineItemGst({
@@ -625,7 +626,6 @@ export default function InvoicesTab() {
                         </Button>
                       </div>
                     </div>
-                    {/* Inline GST breakdown for this item */}
                     {liveBreakup && taxRate > 0n && (
                       <div className="ml-1 text-xs text-muted-foreground flex flex-wrap gap-x-4 gap-y-0.5 bg-muted/30 rounded px-2 py-1">
                         <span>
@@ -754,7 +754,7 @@ export default function InvoicesTab() {
           setIsPaymentDialogOpen(open);
           if (!open) {
             setPaymentAmount("");
-            setPaymentDate(todayStr());
+            setPaymentDate(new Date());
           }
         }}
       >
@@ -825,17 +825,32 @@ export default function InvoicesTab() {
                       </span>
                     </div>
                   </div>
+
+                  {/* Payment Date Picker */}
                   <div className="space-y-2">
-                    <Label htmlFor="paymentDate">Payment Date</Label>
-                    <input
-                      id="paymentDate"
-                      data-ocid="invoice.payment_date.input"
-                      type="date"
-                      value={paymentDate}
-                      onChange={(e) => setPaymentDate(e.target.value)}
-                      className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring"
-                    />
+                    <Label>Payment Date</Label>
+                    <Popover>
+                      <PopoverTrigger asChild>
+                        <Button
+                          data-ocid="invoice.payment_date.input"
+                          variant="outline"
+                          className="w-full justify-start text-left font-normal gap-2"
+                        >
+                          <CalendarIcon className="h-4 w-4" />
+                          {format(paymentDate, "dd MMM yyyy")}
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-auto p-0" align="start">
+                        <Calendar
+                          mode="single"
+                          selected={paymentDate}
+                          onSelect={(date) => date && setPaymentDate(date)}
+                          initialFocus
+                        />
+                      </PopoverContent>
+                    </Popover>
                   </div>
+
                   <div className="space-y-2">
                     <Label htmlFor="paymentAmount">Payment Amount (₹)</Label>
                     <Input

@@ -17,15 +17,14 @@ import {
   Download,
   Loader2,
   Package,
+  Share2,
   Users,
 } from "lucide-react";
 import { useState } from "react";
-import { SiWhatsapp } from "react-icons/si";
 import { toast } from "sonner";
 import type { Customer } from "../backend";
 import { Variant_sale_payment } from "../backend";
 import {
-  useGenerateWhatsappLink,
   useGetAllCustomers,
   useGetAllInvoices,
   useGetAllProducts,
@@ -33,7 +32,7 @@ import {
   useGetCustomerStatement,
 } from "../hooks/useQueries";
 import { formatCurrency } from "../lib/currencyUtils";
-import { openPrintDialog } from "../lib/pdfUtils";
+import { loadJsPDF } from "../lib/pdfUtils";
 
 // ─── Customer Report Row ─────────────────────────────────────────────────────
 
@@ -43,8 +42,11 @@ function CustomerReportRow({ customer }: { customer: Customer }) {
     useGetCustomerFinancialSummary(expanded ? customer.id : null);
   const { data: statement, isLoading: statementLoading } =
     useGetCustomerStatement(expanded ? customer.id : null);
-  const generateWhatsapp = useGenerateWhatsappLink();
   const [pdfLoading, setPdfLoading] = useState(false);
+  const [lastPdfBlob, setLastPdfBlob] = useState<{
+    blob: Blob;
+    filename: string;
+  } | null>(null);
 
   const formatDate = (ts: bigint) =>
     new Date(Number(ts) / 1_000_000).toLocaleDateString("en-IN", {
@@ -61,88 +63,130 @@ function CustomerReportRow({ customer }: { customer: Customer }) {
     : 0n;
   const outstanding = summary ? summary.outstandingBalance : 0n;
 
-  const handleWhatsApp = async () => {
-    if (!customer.phone) {
-      toast.error("No phone number for this customer");
-      return;
-    }
-    if (!summary) {
-      toast.error("Summary not loaded yet");
-      return;
-    }
-    try {
-      const message = `*ARAA TRADE LUBES*\n*Customer Statement*\n\nCustomer: ${customer.name}\n\nTotal Invoiced: ${formatCurrency(totalInvoiced)}\nTotal Paid: ${formatCurrency(totalPaid)}\nOutstanding: ${formatCurrency(outstanding)}\n\nThank you for your business!`;
-      const link = await generateWhatsapp.mutateAsync({
-        phone: customer.phone,
-        message,
-      });
-      window.open(link, "_blank");
-    } catch {
-      toast.error("Failed to open WhatsApp");
-    }
-  };
-
-  const handlePDF = () => {
+  const handlePDF = async () => {
     if (!summary) return;
     setPdfLoading(true);
     try {
+      const { jsPDF, autoTable } = await loadJsPDF();
+
+      const doc = new jsPDF({
+        orientation: "portrait",
+        unit: "mm",
+        format: "a4",
+      });
+      const pageWidth = doc.internal.pageSize.getWidth();
+
+      // Header
+      doc.setFontSize(16);
+      doc.setFont("helvetica", "bold");
+      doc.text("ARAA TRADE LUBES", 14, 20);
+      doc.setFontSize(11);
+      doc.setFont("helvetica", "normal");
+      doc.text("Customer Statement", 14, 27);
+
+      // Customer info
+      doc.setFontSize(10);
+      doc.text(`Customer: ${customer.name}`, 14, 36);
+      let y = 41;
+      if (customer.phone) {
+        doc.text(`Phone: ${customer.phone}`, 14, y);
+        y += 5;
+      }
+
+      // Summary table
+      const summaryRows = [
+        ["Total Invoiced", formatCurrency(totalInvoiced)],
+        ["Total Paid", formatCurrency(totalPaid)],
+        ["Outstanding Balance", formatCurrency(outstanding)],
+      ];
+      autoTable(doc, {
+        startY: y + 3,
+        body: summaryRows,
+        styles: { fontSize: 10 },
+        bodyStyles: { fillColor: [255, 255, 255] },
+        alternateRowStyles: { fillColor: [247, 250, 252] },
+        didParseCell: (data) => {
+          if (data.row.index === 2) {
+            data.cell.styles.fontStyle = "bold";
+            data.cell.styles.fillColor =
+              Number(outstanding) > 0 ? [254, 226, 226] : [220, 252, 231];
+          }
+        },
+      });
+
+      const afterSummary = (doc as any).lastAutoTable.finalY + 8;
+
+      // Transactions table
       const sortedStatement = [...(statement ?? [])].sort((a, b) =>
         Number(a.date - b.date),
       );
-      const rows = sortedStatement
-        .map((e) => {
-          const isSale = e.transactionType === Variant_sale_payment.sale;
-          const typeLabel = isSale ? "Sale" : "Payment";
-          const badgeClass = isSale ? "badge-sale" : "badge-payment";
-          return `<tr>
-              <td>${formatDate(e.date)}</td>
-              <td><span class="badge ${badgeClass}">${typeLabel}</span></td>
-              <td>${e.description}</td>
-              <td style="text-align:right">${formatCurrency(e.amount)}</td>
-              <td style="text-align:right">${formatCurrency(e.runningBalance)}</td>
-            </tr>`;
-        })
-        .join("");
+      const txRows = sortedStatement.map((e) => [
+        formatDate(e.date),
+        e.transactionType === Variant_sale_payment.sale ? "Sale" : "Payment",
+        e.description,
+        formatCurrency(e.amount),
+        formatCurrency(e.runningBalance),
+      ]);
 
-      const outColor = Number(outstanding) > 0 ? "#dc2626" : "#16a34a";
-      const phoneStr = customer.phone ? ` | ${customer.phone}` : "";
-      const html = `<!DOCTYPE html><html><head><meta charset="UTF-8">
-        <title>Statement - ${customer.name}</title>
-        <style>
-          body{font-family:Arial,sans-serif;padding:32px;color:#333}
-          h1{color:#1d4ed8;font-size:22px}h2{font-size:16px;margin:24px 0 8px}
-          .badge{padding:2px 8px;border-radius:4px;font-size:11px;font-weight:bold}
-          .badge-sale{background:#fef3c7;color:#92400e}
-          .badge-payment{background:#dcfce7;color:#166534}
-          table{width:100%;border-collapse:collapse;margin:16px 0}
-          th{background:#1d4ed8;color:#fff;padding:10px;text-align:left;font-size:13px}
-          td{padding:9px 10px;border-bottom:1px solid #e5e7eb;font-size:13px}
-          .cards{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin:20px 0}
-          .card{padding:16px;background:#f8fafc;border-radius:8px;border-left:4px solid #1d4ed8}
-          .card h4{font-size:12px;color:#6b7280;margin-bottom:6px}
-          .card .val{font-size:20px;font-weight:bold;color:#1d4ed8}
-          .out .val{color:${outColor}}
-          .footer{margin-top:40px;padding-top:16px;border-top:1px solid #e5e7eb;font-size:12px;color:#6b7280;text-align:center}
-        </style></head><body>
-        <h1>ARAA TRADE LUBES</h1><p>Customer Statement</p>
-        <p><strong>${customer.name}</strong>${phoneStr}</p>
-        <div class="cards">
-          <div class="card"><h4>Total Invoiced</h4><div class="val">${formatCurrency(totalInvoiced)}</div></div>
-          <div class="card"><h4>Total Paid</h4><div class="val">${formatCurrency(totalPaid)}</div></div>
-          <div class="card out"><h4>Outstanding</h4><div class="val">${formatCurrency(outstanding)}</div></div>
-        </div>
-        <h2>Transactions</h2>
-        <table><thead><tr><th>Date</th><th>Type</th><th>Description</th><th>Amount</th><th>Balance</th></tr></thead>
-        <tbody>${rows}</tbody></table>
-        <div class="footer">ARAA TRADE LUBES | Thank you for your business!</div>
-        <script>window.onload=()=>setTimeout(()=>window.print(),300)</script>
-        </body></html>`;
-      openPrintDialog(html, `Statement_${customer.name}.pdf`);
-      toast.success("PDF dialog opened");
+      if (txRows.length > 0) {
+        doc.setFontSize(11);
+        doc.setFont("helvetica", "bold");
+        doc.text("Transactions", 14, afterSummary);
+        autoTable(doc, {
+          startY: afterSummary + 4,
+          head: [["Date", "Type", "Description", "Amount", "Balance"]],
+          body: txRows,
+          styles: { fontSize: 8 },
+          headStyles: { fillColor: [29, 78, 216], textColor: 255 },
+        });
+      }
+
+      const footerY = doc.internal.pageSize.getHeight() - 15;
+      doc.setFontSize(8);
+      doc.setTextColor(100);
+      doc.text(
+        "Thank you for your business! - ARAA TRADE LUBES",
+        pageWidth / 2,
+        footerY,
+        { align: "center" },
+      );
+
+      const filename = `Statement_${customer.name}_${Date.now()}.pdf`;
+      const blob = doc.output("blob");
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
+      setLastPdfBlob({ blob, filename });
+      toast.success("PDF downloaded successfully");
     } catch {
       toast.error("Failed to generate PDF");
     } finally {
       setPdfLoading(false);
+    }
+  };
+
+  const handleSharePDF = async () => {
+    if (!lastPdfBlob) return;
+    try {
+      const file = new File([lastPdfBlob.blob], lastPdfBlob.filename, {
+        type: "application/pdf",
+      });
+      if (navigator.canShare?.({ files: [file] })) {
+        await navigator.share({
+          files: [file],
+          title: `Statement - ${customer.name}`,
+        });
+      } else {
+        toast.error("Sharing is not supported on this device/browser");
+      }
+    } catch (err: any) {
+      if (err?.name !== "AbortError") toast.error("Failed to share PDF");
     }
   };
 
@@ -335,20 +379,18 @@ function CustomerReportRow({ customer }: { customer: Customer }) {
                   )}
                   Download PDF
                 </Button>
-                <Button
-                  size="sm"
-                  className="gap-1.5 text-xs bg-[#25D366] hover:bg-[#1ebe5d] text-white"
-                  onClick={handleWhatsApp}
-                  disabled={generateWhatsapp.isPending || !customer.phone}
-                  data-ocid="reports.customer.secondary_button"
-                >
-                  {generateWhatsapp.isPending ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : (
-                    <SiWhatsapp className="h-3.5 w-3.5" />
-                  )}
-                  Share via WhatsApp
-                </Button>
+                {lastPdfBlob && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="gap-1.5 text-xs"
+                    onClick={handleSharePDF}
+                    data-ocid="reports.customer.secondary_button"
+                  >
+                    <Share2 className="h-3.5 w-3.5" />
+                    Share PDF
+                  </Button>
+                )}
               </div>
             </>
           )}
@@ -475,17 +517,17 @@ function ProductWiseTab() {
               key={Number(row.product.id)}
               data-ocid="reports.products.row"
             >
-              <TableCell className="text-muted-foreground text-xs">
+              <TableCell className="text-muted-foreground text-sm">
                 {idx + 1}
               </TableCell>
               <TableCell className="font-medium">{row.product.name}</TableCell>
-              <TableCell className="text-xs text-muted-foreground">
-                {row.product.hsnSacCode || "—"}
+              <TableCell className="text-muted-foreground">
+                {row.product.hsnSacCode || "-"}
               </TableCell>
               <TableCell className="text-right">
                 {formatCurrency(row.product.price)}
               </TableCell>
-              <TableCell className="text-right font-semibold">
+              <TableCell className="text-right">
                 {Number(row.unitsSold)}
               </TableCell>
               <TableCell className="text-right font-bold text-primary">

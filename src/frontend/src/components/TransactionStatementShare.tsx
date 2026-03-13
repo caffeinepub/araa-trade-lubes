@@ -1,14 +1,12 @@
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
-import { Download, Loader2 } from "lucide-react";
+import { Download, Loader2, Share2 } from "lucide-react";
 import { useState } from "react";
-import { SiWhatsapp } from "react-icons/si";
 import { toast } from "sonner";
 import type { Customer, UserProfile } from "../backend";
-import { useGenerateWhatsappLink } from "../hooks/useQueries";
 import { formatCurrency } from "../lib/currencyUtils";
-import { openPrintDialog } from "../lib/pdfUtils";
+import { loadJsPDF } from "../lib/pdfUtils";
 
 interface TransactionStatementShareProps {
   customer: Customer;
@@ -27,168 +25,110 @@ export default function TransactionStatementShare({
   newBalance,
   userProfile,
 }: TransactionStatementShareProps) {
-  const generateWhatsappLink = useGenerateWhatsappLink();
   const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);
+  const [lastPdfBlob, setLastPdfBlob] = useState<{
+    blob: Blob;
+    filename: string;
+  } | null>(null);
 
-  const handleDownloadPDF = () => {
+  const handleDownloadPDF = async () => {
     setIsGeneratingPDF(true);
     try {
-      const htmlContent = `
-        <!DOCTYPE html>
-        <html>
-        <head>
-          <meta charset="utf-8">
-          <title>Transaction Statement - ${customer.name}</title>
-          <style>
-            body {
-              font-family: Arial, sans-serif;
-              padding: 40px;
-              max-width: 800px;
-              margin: 0 auto;
-            }
-            .header {
-              text-align: center;
-              margin-bottom: 30px;
-              border-bottom: 2px solid #333;
-              padding-bottom: 20px;
-            }
-            .company-name {
-              font-size: 24px;
-              font-weight: bold;
-              margin-bottom: 5px;
-            }
-            .company-info {
-              font-size: 12px;
-              color: #666;
-              margin-top: 5px;
-            }
-            .statement-title {
-              font-size: 20px;
-              font-weight: bold;
-              margin: 20px 0;
-              text-align: center;
-            }
-            .customer-info {
-              margin: 20px 0;
-              padding: 15px;
-              background: #f5f5f5;
-              border-radius: 5px;
-            }
-            .info-row {
-              display: flex;
-              justify-content: space-between;
-              margin: 8px 0;
-            }
-            .label {
-              font-weight: bold;
-            }
-            .transaction-details {
-              margin: 30px 0;
-              border: 1px solid #ddd;
-              border-radius: 5px;
-              overflow: hidden;
-            }
-            .detail-row {
-              display: flex;
-              justify-content: space-between;
-              padding: 12px 15px;
-              border-bottom: 1px solid #ddd;
-            }
-            .detail-row:last-child {
-              border-bottom: none;
-            }
-            .detail-row.highlight {
-              background: #f9f9f9;
-              font-weight: bold;
-            }
-            .amount-positive {
-              color: #dc2626;
-            }
-            .amount-negative {
-              color: #16a34a;
-            }
-            .footer {
-              margin-top: 40px;
-              text-align: center;
-              font-size: 12px;
-              color: #666;
-            }
-            @media print {
-              body {
-                padding: 20px;
-              }
-            }
-          </style>
-        </head>
-        <body>
-          <div class="header">
-            <div class="company-name">${userProfile?.businessName || "ARAA TRADE LUBES"}</div>
-            ${userProfile?.companyInfo?.address ? `<div class="company-info">${userProfile.companyInfo.address}</div>` : ""}
-            ${userProfile?.companyInfo?.gstNumber ? `<div class="company-info">GST: ${userProfile.companyInfo.gstNumber}</div>` : ""}
-          </div>
+      const { jsPDF, autoTable } = await loadJsPDF();
 
-          <div class="statement-title">Transaction Statement</div>
+      const doc = new jsPDF({
+        orientation: "portrait",
+        unit: "mm",
+        format: "a4",
+      });
+      const pageWidth = doc.internal.pageSize.getWidth();
 
-          <div class="customer-info">
-            <div class="info-row">
-              <span class="label">Customer:</span>
-              <span>${customer.name}</span>
-            </div>
-            ${
-              customer.phone
-                ? `
-            <div class="info-row">
-              <span class="label">Phone:</span>
-              <span>${customer.phone}</span>
-            </div>
-            `
-                : ""
-            }
-            ${
-              customer.gstNumber
-                ? `
-            <div class="info-row">
-              <span class="label">GST:</span>
-              <span>${customer.gstNumber}</span>
-            </div>
-            `
-                : ""
-            }
-            <div class="info-row">
-              <span class="label">Date:</span>
-              <span>${new Date().toLocaleDateString("en-IN")}</span>
-            </div>
-          </div>
+      // Header
+      doc.setFontSize(16);
+      doc.setFont("helvetica", "bold");
+      doc.text(userProfile?.businessName || "ARAA TRADE LUBES", 14, 20);
+      doc.setFontSize(9);
+      doc.setFont("helvetica", "normal");
+      const address = userProfile?.companyInfo?.address || "";
+      const gstNum = userProfile?.companyInfo?.gstNumber || "";
+      let yPos = 26;
+      if (address) {
+        doc.text(address, 14, yPos);
+        yPos += 5;
+      }
+      if (gstNum) {
+        doc.text(`GSTIN: ${gstNum}`, 14, yPos);
+        yPos += 5;
+      }
 
-          <div class="transaction-details">
-            <div class="detail-row">
-              <span class="label">Previous Outstanding:</span>
-              <span>${formatCurrency(previousBalance)}</span>
-            </div>
-            <div class="detail-row">
-              <span class="label">${transactionType === "sale" ? "New Sale:" : "Payment Received:"}</span>
-              <span class="${transactionType === "sale" ? "amount-positive" : "amount-negative"}">
-                ${transactionType === "sale" ? "+" : "-"}${formatCurrency(transactionAmount)}
-              </span>
-            </div>
-            <div class="detail-row highlight">
-              <span class="label">Current Outstanding:</span>
-              <span>${formatCurrency(newBalance)}</span>
-            </div>
-          </div>
+      // Title
+      doc.setFontSize(14);
+      doc.setFont("helvetica", "bold");
+      doc.text("Transaction Statement", pageWidth / 2, yPos + 4, {
+        align: "center",
+      });
+      yPos += 12;
 
-          <div class="footer">
-            <p>Thank you for your business!</p>
-            <p>Generated on ${new Date().toLocaleString("en-IN")}</p>
-          </div>
-        </body>
-        </html>
-      `;
+      // Customer info
+      doc.setFontSize(10);
+      doc.setFont("helvetica", "normal");
+      doc.text(`Customer: ${customer.name}`, 14, yPos);
+      yPos += 5;
+      if (customer.phone) {
+        doc.text(`Phone: ${customer.phone}`, 14, yPos);
+        yPos += 5;
+      }
+      if (customer.gstNumber) {
+        doc.text(`GSTIN: ${customer.gstNumber}`, 14, yPos);
+        yPos += 5;
+      }
+      doc.text(`Date: ${new Date().toLocaleDateString("en-IN")}`, 14, yPos);
+      yPos += 8;
 
-      openPrintDialog(
-        htmlContent,
-        `Statement-${customer.name}-${Date.now()}.pdf`,
-      );
+      // Transaction summary table
+      const rows = [
+        ["Previous Outstanding", formatCurrency(previousBalance)],
+        [
+          transactionType === "sale" ? "New Sale" : "Payment Received",
+          `${transactionType === "sale" ? "+" : "-"}${formatCurrency(transactionAmount)}`,
+        ],
+        ["Current Outstanding", formatCurrency(newBalance)],
+      ];
+
+      autoTable(doc, {
+        startY: yPos,
+        body: rows,
+        styles: { fontSize: 11 },
+        bodyStyles: { fillColor: [255, 255, 255] },
+        alternateRowStyles: { fillColor: [247, 250, 252] },
+        didParseCell: (data) => {
+          if (data.row.index === 2) {
+            data.cell.styles.fontStyle = "bold";
+            data.cell.styles.fillColor = [235, 248, 255];
+          }
+        },
+      });
+
+      const footerY = doc.internal.pageSize.getHeight() - 15;
+      doc.setFontSize(8);
+      doc.setTextColor(100);
+      doc.text("Thank you for your business!", pageWidth / 2, footerY, {
+        align: "center",
+      });
+
+      const filename = `Statement-${customer.name}-${Date.now()}.pdf`;
+      const blob = doc.output("blob");
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
+      setLastPdfBlob({ blob, filename });
+      toast.success("PDF downloaded successfully");
     } catch (error: any) {
       toast.error(error.message || "Failed to generate PDF");
     } finally {
@@ -196,30 +136,22 @@ export default function TransactionStatementShare({
     }
   };
 
-  const handleWhatsAppShare = async () => {
-    const message = `
-*Transaction Statement*
-
-Customer: ${customer.name}
-Date: ${new Date().toLocaleDateString("en-IN")}
-
-Previous Outstanding: ${formatCurrency(previousBalance)}
-${transactionType === "sale" ? "New Sale" : "Payment Received"}: ${transactionType === "sale" ? "+" : "-"}${formatCurrency(transactionAmount)}
-Current Outstanding: ${formatCurrency(newBalance)}
-
-Thank you for your business!
-- ${userProfile?.businessName || "ARAA TRADE LUBES"}
-    `.trim();
-
+  const handleSharePDF = async () => {
+    if (!lastPdfBlob) return;
     try {
-      const link = await generateWhatsappLink.mutateAsync({
-        phone: customer.phone,
-        message,
+      const file = new File([lastPdfBlob.blob], lastPdfBlob.filename, {
+        type: "application/pdf",
       });
-      window.open(link, "_blank");
-    } catch (error) {
-      toast.error("Failed to generate WhatsApp link");
-      console.error(error);
+      if (navigator.canShare?.({ files: [file] })) {
+        await navigator.share({
+          files: [file],
+          title: `Statement - ${customer.name}`,
+        });
+      } else {
+        toast.error("Sharing is not supported on this device/browser");
+      }
+    } catch (err: any) {
+      if (err?.name !== "AbortError") toast.error("Failed to share PDF");
     }
   };
 
@@ -259,7 +191,11 @@ Thank you for your business!
                 {transactionType === "sale" ? "New Sale:" : "Payment Received:"}
               </span>
               <span
-                className={`font-medium ${transactionType === "sale" ? "text-destructive" : "text-green-600"}`}
+                className={`font-medium ${
+                  transactionType === "sale"
+                    ? "text-destructive"
+                    : "text-green-600"
+                }`}
               >
                 {transactionType === "sale" ? "+" : "-"}
                 {formatCurrency(transactionAmount)}
@@ -280,6 +216,7 @@ Thank you for your business!
           disabled={isGeneratingPDF}
           variant="outline"
           className="flex-1"
+          data-ocid="statement.download_button"
         >
           {isGeneratingPDF ? (
             <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -288,18 +225,17 @@ Thank you for your business!
           )}
           Download PDF
         </Button>
-        <Button
-          onClick={handleWhatsAppShare}
-          disabled={!customer.phone || generateWhatsappLink.isPending}
-          className="flex-1 bg-green-600 hover:bg-green-700"
-        >
-          {generateWhatsappLink.isPending ? (
-            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-          ) : (
-            <SiWhatsapp className="mr-2 h-4 w-4" />
-          )}
-          Share via WhatsApp
-        </Button>
+        {lastPdfBlob && (
+          <Button
+            onClick={handleSharePDF}
+            variant="outline"
+            className="flex-1"
+            data-ocid="statement.secondary_button"
+          >
+            <Share2 className="mr-2 h-4 w-4" />
+            Share PDF
+          </Button>
+        )}
       </div>
     </div>
   );

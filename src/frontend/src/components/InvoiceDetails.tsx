@@ -14,14 +14,16 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Printer } from "lucide-react";
-import React from "react";
+import { Download, Share2 } from "lucide-react";
+import { useState } from "react";
+import { toast } from "sonner";
 import type { Customer, Invoice, Product } from "../backend";
 import { useGetCallerUserProfile } from "../hooks/useQueries";
 import {
   calculateSummaryFromBreakups,
   formatPaiseToINR,
 } from "../lib/gstUtils";
+import { loadJsPDF } from "../lib/pdfUtils";
 
 interface InvoiceDetailsProps {
   invoice: Invoice;
@@ -39,9 +41,17 @@ export default function InvoiceDetails({
   products,
 }: InvoiceDetailsProps) {
   const { data: userProfile } = useGetCallerUserProfile();
+  const [lastPdfBlob, setLastPdfBlob] = useState<{
+    blob: Blob;
+    filename: string;
+  } | null>(null);
 
   const customer = customers.find((c) => c.id === invoice.customerId);
   const summary = calculateSummaryFromBreakups(invoice.gstBreakups);
+
+  const companyName = userProfile?.businessName || "ARAA TRADE LUBES";
+  const companyAddress = userProfile?.companyInfo?.address || "";
+  const companyGst = userProfile?.companyInfo?.gstNumber || "";
 
   const getProductName = (productId: bigint): string => {
     const product = products.find((p) => p.id === productId);
@@ -67,147 +77,183 @@ export default function InvoiceDetails({
     });
   };
 
-  const handlePrint = () => {
-    const companyName = userProfile?.businessName || "Your Business";
-    const companyAddress = userProfile?.companyInfo?.address || "";
-    const companyGst = userProfile?.companyInfo?.gstNumber || "";
+  const handleDownloadPDF = async () => {
+    try {
+      const { jsPDF, autoTable } = await loadJsPDF();
 
-    // Build line items HTML using stored breakup data
-    const lineItemsHtml = invoice.items
-      .map((item, index) => {
-        const breakup = invoice.gstBreakups[index];
-        const productName = getProductName(item.productId);
-        const hsnCode = getProductHsn(item.productId);
-        const taxRate = getProductTaxRate(item.productId);
-        const unitPrice = breakup
-          ? formatPaiseToINR(breakup.taxableAmount / item.quantity)
-          : formatPaiseToINR(item.price);
-        const taxableAmt = breakup
-          ? formatPaiseToINR(breakup.taxableAmount)
-          : "-";
-        const cgst = breakup ? formatPaiseToINR(breakup.cgst) : "-";
-        const sgst = breakup ? formatPaiseToINR(breakup.sgst) : "-";
-        const igst = breakup ? formatPaiseToINR(breakup.igst) : "-";
-        const lineTotal = breakup ? formatPaiseToINR(breakup.totalAmount) : "-";
+      const doc = new jsPDF({
+        orientation: "portrait",
+        unit: "mm",
+        format: "a4",
+      });
+      const pageWidth = doc.internal.pageSize.getWidth();
 
-        return `
-          <tr>
-            <td style="padding:8px;border:1px solid #e2e8f0;">${productName}</td>
-            <td style="padding:8px;border:1px solid #e2e8f0;text-align:center;">${hsnCode || "-"}</td>
-            <td style="padding:8px;border:1px solid #e2e8f0;text-align:center;">${Number(item.quantity)}</td>
-            <td style="padding:8px;border:1px solid #e2e8f0;text-align:right;">${unitPrice}</td>
-            <td style="padding:8px;border:1px solid #e2e8f0;text-align:right;">${taxableAmt}</td>
-            <td style="padding:8px;border:1px solid #e2e8f0;text-align:center;">${taxRate}</td>
-            <td style="padding:8px;border:1px solid #e2e8f0;text-align:right;">${cgst}</td>
-            <td style="padding:8px;border:1px solid #e2e8f0;text-align:right;">${sgst}</td>
-            <td style="padding:8px;border:1px solid #e2e8f0;text-align:right;">${igst}</td>
-            <td style="padding:8px;border:1px solid #e2e8f0;text-align:right;font-weight:600;">${lineTotal}</td>
-          </tr>
-        `;
-      })
-      .join("");
+      // Company name (left)
+      doc.setFontSize(16);
+      doc.setFont("helvetica", "bold");
+      doc.text(companyName, 14, 20);
+      doc.setFontSize(9);
+      doc.setFont("helvetica", "normal");
+      if (companyAddress) doc.text(companyAddress, 14, 26);
+      if (companyGst)
+        doc.text(`GSTIN: ${companyGst}`, 14, companyAddress ? 31 : 26);
 
-    const printContent = `
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <title>Invoice #${invoice.id} - ${companyName}</title>
-        <style>
-          body { font-family: Arial, sans-serif; margin: 0; padding: 20px; color: #1a202c; font-size: 13px; }
-          .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 24px; }
-          .company-info h1 { font-size: 22px; font-weight: 700; margin: 0 0 4px; color: #1a202c; }
-          .company-info p { margin: 2px 0; color: #4a5568; font-size: 12px; }
-          .invoice-meta { text-align: right; }
-          .invoice-meta h2 { font-size: 18px; font-weight: 700; color: #2d3748; margin: 0 0 8px; }
-          .invoice-meta p { margin: 2px 0; font-size: 12px; color: #4a5568; }
-          .bill-to { margin-bottom: 20px; padding: 12px; background: #f7fafc; border-radius: 6px; }
-          .bill-to h3 { font-size: 12px; font-weight: 600; color: #718096; text-transform: uppercase; margin: 0 0 6px; }
-          .bill-to p { margin: 2px 0; font-size: 13px; }
-          table { width: 100%; border-collapse: collapse; margin-bottom: 20px; font-size: 12px; }
-          th { background: #2d3748; color: white; padding: 8px; text-align: left; font-size: 11px; }
-          th.right { text-align: right; }
-          th.center { text-align: center; }
-          .totals { margin-left: auto; width: 320px; }
-          .totals table { margin-bottom: 0; }
-          .totals td { padding: 5px 8px; border: 1px solid #e2e8f0; font-size: 13px; }
-          .totals .grand-total td { font-weight: 700; font-size: 14px; background: #ebf8ff; }
-          .footer { margin-top: 32px; text-align: center; font-size: 11px; color: #718096; border-top: 1px solid #e2e8f0; padding-top: 12px; }
-        </style>
-      </head>
-      <body>
-        <div class="header">
-          <div class="company-info">
-            <h1>${companyName}</h1>
-            ${companyAddress ? `<p>${companyAddress}</p>` : ""}
-            ${companyGst ? `<p>GSTIN: ${companyGst}</p>` : ""}
-          </div>
-          <div class="invoice-meta">
-            <h2>TAX INVOICE</h2>
-            <p><strong>Invoice #:</strong> ${invoice.id}</p>
-            <p><strong>Date:</strong> ${formatDate(invoice.createdAt)}</p>
-          </div>
-        </div>
+      // Invoice meta (right)
+      doc.setFontSize(16);
+      doc.setFont("helvetica", "bold");
+      doc.text("TAX INVOICE", pageWidth - 14, 20, { align: "right" });
+      doc.setFontSize(9);
+      doc.setFont("helvetica", "normal");
+      doc.text(`Invoice #: ${String(invoice.id)}`, pageWidth - 14, 26, {
+        align: "right",
+      });
+      doc.text(`Date: ${formatDate(invoice.createdAt)}`, pageWidth - 14, 31, {
+        align: "right",
+      });
 
-        ${
-          customer
-            ? `
-        <div class="bill-to">
-          <h3>Bill To</h3>
-          <p><strong>${customer.name}</strong></p>
-          ${customer.address ? `<p>${customer.address}</p>` : ""}
-          ${customer.phone ? `<p>Phone: ${customer.phone}</p>` : ""}
-          ${customer.gstNumber ? `<p>GSTIN: ${customer.gstNumber}</p>` : ""}
-        </div>
-        `
-            : ""
+      // Bill to section
+      let y = 42;
+      doc.setFont("helvetica", "bold");
+      doc.text("Bill To:", 14, y);
+      doc.setFont("helvetica", "normal");
+      y += 5;
+      if (customer) {
+        doc.text(customer.name, 14, y);
+        y += 5;
+        if (customer.address) {
+          doc.text(String(customer.address), 14, y);
+          y += 5;
         }
+        if (customer.phone) {
+          doc.text(`Phone: ${String(customer.phone)}`, 14, y);
+          y += 5;
+        }
+        if (customer.gstNumber) {
+          doc.text(`GSTIN: ${String(customer.gstNumber)}`, 14, y);
+          y += 5;
+        }
+      }
 
-        <table>
-          <thead>
-            <tr>
-              <th>Product</th>
-              <th class="center">HSN/SAC</th>
-              <th class="center">Qty</th>
-              <th class="right">Unit Price</th>
-              <th class="right">Taxable Amt</th>
-              <th class="center">GST%</th>
-              <th class="right">CGST</th>
-              <th class="right">SGST</th>
-              <th class="right">IGST</th>
-              <th class="right">Total</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${lineItemsHtml}
-          </tbody>
-        </table>
+      // Items table
+      const tableRows = invoice.items.map((item, idx) => {
+        const breakup = invoice.gstBreakups[idx];
+        return [
+          getProductName(item.productId),
+          getProductHsn(item.productId) || "-",
+          String(Number(item.quantity)),
+          breakup
+            ? formatPaiseToINR(breakup.taxableAmount / item.quantity)
+            : formatPaiseToINR(item.price),
+          breakup ? formatPaiseToINR(breakup.taxableAmount) : "-",
+          getProductTaxRate(item.productId),
+          breakup ? formatPaiseToINR(breakup.cgst) : "-",
+          breakup ? formatPaiseToINR(breakup.sgst) : "-",
+          breakup ? formatPaiseToINR(breakup.igst) : "-",
+          breakup ? formatPaiseToINR(breakup.totalAmount) : "-",
+        ];
+      });
 
-        <div class="totals">
-          <table>
-            <tr><td>Taxable Amount</td><td style="text-align:right;">${formatPaiseToINR(summary.taxableAmount)}</td></tr>
-            ${summary.cgst > 0n ? `<tr><td>CGST</td><td style="text-align:right;">${formatPaiseToINR(summary.cgst)}</td></tr>` : ""}
-            ${summary.sgst > 0n ? `<tr><td>SGST</td><td style="text-align:right;">${formatPaiseToINR(summary.sgst)}</td></tr>` : ""}
-            ${summary.igst > 0n ? `<tr><td>IGST</td><td style="text-align:right;">${formatPaiseToINR(summary.igst)}</td></tr>` : ""}
-            <tr><td>Total Tax</td><td style="text-align:right;">${formatPaiseToINR(summary.totalTax)}</td></tr>
-            <tr class="grand-total"><td><strong>Grand Total</strong></td><td style="text-align:right;"><strong>${formatPaiseToINR(summary.totalAmount)}</strong></td></tr>
-          </table>
-        </div>
+      autoTable(doc, {
+        startY: y + 3,
+        head: [
+          [
+            "Product",
+            "HSN",
+            "Qty",
+            "Unit Price",
+            "Taxable",
+            "GST%",
+            "CGST",
+            "SGST",
+            "IGST",
+            "Total",
+          ],
+        ],
+        body: tableRows,
+        styles: { fontSize: 7, cellPadding: 2 },
+        headStyles: { fillColor: [45, 55, 72], textColor: 255, fontSize: 7 },
+        columnStyles: { 0: { cellWidth: 30 } },
+      });
 
-        <div class="footer">
-          <p>Thank you for your business!</p>
-        </div>
-      </body>
-      </html>
-    `;
+      const finalY = (doc as any).lastAutoTable.finalY + 8;
 
-    const printWindow = window.open("", "_blank");
-    if (printWindow) {
-      printWindow.document.write(printContent);
-      printWindow.document.close();
-      printWindow.focus();
-      setTimeout(() => {
-        printWindow.print();
-      }, 500);
+      // GST Summary
+      const summaryTableBody: string[][] = [
+        ["Taxable Amount", formatPaiseToINR(summary.taxableAmount)],
+      ];
+      if (summary.cgst > 0n)
+        summaryTableBody.push(["CGST", formatPaiseToINR(summary.cgst)]);
+      if (summary.sgst > 0n)
+        summaryTableBody.push(["SGST", formatPaiseToINR(summary.sgst)]);
+      if (summary.igst > 0n)
+        summaryTableBody.push(["IGST", formatPaiseToINR(summary.igst)]);
+      summaryTableBody.push(["Total Tax", formatPaiseToINR(summary.totalTax)]);
+      summaryTableBody.push([
+        "Grand Total",
+        formatPaiseToINR(summary.totalAmount),
+      ]);
+
+      doc.setFont("helvetica", "bold");
+      doc.text("GST Summary", pageWidth - 14 - 70, finalY);
+
+      autoTable(doc, {
+        startY: finalY + 4,
+        margin: { left: pageWidth - 14 - 70 },
+        tableWidth: 70,
+        body: summaryTableBody,
+        styles: { fontSize: 9 },
+        bodyStyles: { fillColor: [255, 255, 255] },
+        alternateRowStyles: { fillColor: [247, 250, 252] },
+        didParseCell: (data) => {
+          if (data.row.index === summaryTableBody.length - 1) {
+            data.cell.styles.fontStyle = "bold";
+            data.cell.styles.fillColor = [235, 248, 255];
+          }
+        },
+      });
+
+      // Footer
+      const footerY = doc.internal.pageSize.getHeight() - 15;
+      doc.setFontSize(8);
+      doc.setTextColor(100);
+      doc.text("Thank you for your business!", pageWidth / 2, footerY, {
+        align: "center",
+      });
+
+      const filename = `Invoice_${String(invoice.id)}_${companyName.replace(/\s+/g, "_")}.pdf`;
+      const blob = doc.output("blob");
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      setLastPdfBlob({ blob, filename });
+      toast.success("PDF downloaded successfully");
+    } catch (err) {
+      console.error("PDF generation failed:", err);
+      toast.error("Failed to generate PDF. Please try again.");
+    }
+  };
+
+  const handleSharePDF = async () => {
+    if (!lastPdfBlob) return;
+    try {
+      const file = new File([lastPdfBlob.blob], lastPdfBlob.filename, {
+        type: "application/pdf",
+      });
+      if (navigator.canShare?.({ files: [file] })) {
+        await navigator.share({
+          files: [file],
+          title: `Invoice #${String(invoice.id)}`,
+        });
+      } else {
+        toast.error("Sharing is not supported on this device/browser");
+      }
+    } catch (err: any) {
+      if (err?.name !== "AbortError") toast.error("Failed to share PDF");
     }
   };
 
@@ -217,15 +263,30 @@ export default function InvoiceDetails({
         <DialogHeader>
           <div className="flex items-center justify-between">
             <DialogTitle>Invoice #{String(invoice.id)}</DialogTitle>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handlePrint}
-              className="gap-2 mr-6"
-            >
-              <Printer className="h-4 w-4" />
-              Print / PDF
-            </Button>
+            <div className="flex items-center gap-2 mr-6">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleDownloadPDF}
+                className="gap-2"
+                data-ocid="invoice.download_button"
+              >
+                <Download className="h-4 w-4" />
+                Download PDF
+              </Button>
+              {lastPdfBlob && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleSharePDF}
+                  className="gap-2"
+                  data-ocid="invoice.secondary_button"
+                >
+                  <Share2 className="h-4 w-4" />
+                  Share PDF
+                </Button>
+              )}
+            </div>
           </div>
         </DialogHeader>
 
@@ -281,7 +342,6 @@ export default function InvoiceDetails({
                     const productName = getProductName(item.productId);
                     const hsnCode = getProductHsn(item.productId);
                     const taxRate = getProductTaxRate(item.productId);
-                    // Use stored breakup values directly — no recalculation
                     const unitPricePaise = breakup
                       ? breakup.taxableAmount / item.quantity
                       : item.price;
@@ -331,7 +391,7 @@ export default function InvoiceDetails({
 
           <Separator />
 
-          {/* GST Summary — sourced entirely from backend-stored breakups */}
+          {/* GST Summary */}
           <div className="flex justify-end">
             <div className="w-72 space-y-2">
               <h3 className="font-semibold mb-3">GST Summary</h3>
