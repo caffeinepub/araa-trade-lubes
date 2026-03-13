@@ -64,7 +64,7 @@ actor {
 
   public type GstBreakup = {
     taxableAmount : Int;
-    sgst : Int; // In paise (cents of INR)
+    sgst : Int;
     cgst : Int;
     igst : Int;
     totalTax : Int;
@@ -148,22 +148,23 @@ actor {
     };
   };
 
-  let customers = Map.empty<Nat, Customer>();
-  let vendors = Map.empty<Nat, Vendor>();
-  let products = Map.empty<Nat, Product>();
-  let invoices = Map.empty<Nat, Invoice>();
-  let payments = Map.empty<Nat, Payment>();
-  let transactions = Map.empty<Nat, Transaction>();
-  let userProfiles = Map.empty<Principal, UserProfile>();
+  // STABLE storage - persists across all upgrades and redeployments
+  stable let customers = Map.empty<Nat, Customer>();
+  stable let vendors = Map.empty<Nat, Vendor>();
+  stable let products = Map.empty<Nat, Product>();
+  stable let invoices = Map.empty<Nat, Invoice>();
+  stable let payments = Map.empty<Nat, Payment>();
+  stable let transactions = Map.empty<Nat, Transaction>();
+  stable let userProfiles = Map.empty<Principal, UserProfile>();
 
-  var nextCustomerId = 1;
-  var nextVendorId = 1;
-  var nextProductId = 1;
-  var nextInvoiceId = 1;
-  var nextPaymentId = 1;
-  var nextTransactionId = 1;
+  stable var nextCustomerId = 1;
+  stable var nextVendorId = 1;
+  stable var nextProductId = 1;
+  stable var nextInvoiceId = 1;
+  stable var nextPaymentId = 1;
+  stable var nextTransactionId = 1;
 
-  var stripeConfiguration : ?Stripe.StripeConfiguration = null;
+  stable var stripeConfiguration : ?Stripe.StripeConfiguration = null;
 
   // STRIPE INTEGRATION
   public query func isStripeConfigured() : async Bool {
@@ -384,11 +385,10 @@ actor {
     id;
   };
 
-  public shared ({ caller }) func addInvoice(customerId : Nat, items : [InvoiceItem]) : async Nat {
+  public shared ({ caller }) func addInvoice(customerId : Nat, items : [InvoiceItem], invoiceDate : ?Time.Time) : async Nat {
     if (not (AccessControl.hasPermission(accessControlState, caller, #user))) {
       Runtime.trap("Unauthorized: Only users can add invoices");
     };
-    // Verify customer exists
     switch (customers.get(customerId)) {
       case (null) { Runtime.trap("Customer not found") };
       case (_) {};
@@ -399,6 +399,10 @@ actor {
     };
 
     let gstBreakups = calculateGstBreakup(customerId, items);
+    let timestamp = switch (invoiceDate) {
+      case (?d) { d };
+      case (null) { Time.now() };
+    };
 
     let id = nextInvoiceId;
     let newInvoice : Invoice = {
@@ -408,7 +412,7 @@ actor {
       total;
       gstBreakups;
       status = #pending;
-      createdAt = Time.now();
+      createdAt = timestamp;
       updatedAt = Time.now();
     };
     invoices.add(id, newInvoice);
@@ -416,24 +420,53 @@ actor {
     id;
   };
 
-  public shared ({ caller }) func recordPayment(invoiceId : Nat, amount : Int) : async Nat {
+  public shared ({ caller }) func recordPayment(invoiceId : Nat, amount : Int, paymentDate : ?Time.Time) : async Nat {
     if (not (AccessControl.hasPermission(accessControlState, caller, #user))) {
       Runtime.trap("Unauthorized: Only users can record payments");
     };
-    // Verify invoice exists before recording payment
     switch (invoices.get(invoiceId)) {
       case (null) { Runtime.trap("Invoice not found") };
       case (_) {};
+    };
+    let timestamp = switch (paymentDate) {
+      case (?d) { d };
+      case (null) { Time.now() };
     };
     let id = nextPaymentId;
     let newPayment : Payment = {
       id;
       invoiceId;
       amount;
-      date = Time.now();
+      date = timestamp;
     };
     payments.add(id, newPayment);
     nextPaymentId += 1;
+
+    // Update invoice status
+    switch (invoices.get(invoiceId)) {
+      case (null) {};
+      case (?invoice) {
+        var totalPaid : Int = 0;
+        for (p in payments.values()) {
+          if (p.invoiceId == invoiceId) {
+            totalPaid += p.amount;
+          };
+        };
+        let newStatus = if (totalPaid >= invoice.total) { #paid } else { #pending };
+        let updatedInvoice : Invoice = {
+          id = invoice.id;
+          customerId = invoice.customerId;
+          items = invoice.items;
+          total = invoice.total;
+          gstBreakups = invoice.gstBreakups;
+          status = newStatus;
+          createdAt = invoice.createdAt;
+          updatedAt = Time.now();
+        };
+        invoices.add(invoiceId, updatedInvoice);
+      };
+    };
+
     id;
   };
 
@@ -666,7 +699,6 @@ actor {
 
         var runningBalance = 0;
 
-        // Add invoices as sales
         for (invoice in customerInvoices.values()) {
           runningBalance += invoice.total.toNat();
           let entry : CustomerStatementEntry = {
@@ -679,7 +711,6 @@ actor {
           statementEntries.add(entry);
         };
 
-        // Add payments
         for (payment in customerPayments.values()) {
           runningBalance -= payment.amount.toNat();
           let entry : CustomerStatementEntry = {
@@ -708,12 +739,10 @@ actor {
     "https://wa.me/" # formattedPhone # "?text=" # encodedMessage;
   };
 
-  // Function to remove non-digit characters from phone number
   func cleanPhoneNumber(input : Text) : Text {
     input.toArray().filter(func(char) { char.toNat32() >= 48 and char.toNat32() <= 57 }).toText();
   };
 
-  // Function to replace spaces with '+' in a Text
   func replaceSpaces(input : Text) : Text {
     input.toArray().map(func(c) { if (c == ' ') { '+' } else { c } }).toText();
   };
@@ -731,10 +760,8 @@ actor {
             let taxRate = product.taxRate;
 
             if (shouldApplyCgstSgst(?product.hsnSacCode, taxRate)) {
-              // Intra-state (same state)
               calculateWithCgstSgst(taxableAmount, taxRate);
             } else {
-              // Inter-state (different states or unknown)
               calculateWithIgst(taxableAmount, taxRate);
             };
           };
@@ -776,13 +803,8 @@ actor {
 
   func shouldApplyCgstSgst(customerState : ?Text, _taxRate : Int) : Bool {
     switch (customerState) {
-      case (null) {
-        // Unknown, default to inter-state (apply IGST)
-        false;
-      };
-      case (?state) {
-        not Text.equal(state, "");
-      };
+      case (null) { false };
+      case (?state) { not Text.equal(state, "") };
     };
   };
 };

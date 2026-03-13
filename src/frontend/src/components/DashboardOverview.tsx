@@ -2,17 +2,30 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Building2,
+  CalendarDays,
   DollarSign,
   FileText,
   Package,
+  ShoppingCart,
   Sparkles,
   TrendingUp,
   Users,
+  Wallet,
 } from "lucide-react";
 import type React from "react";
 import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
+import {
   useGetAllCustomers,
   useGetAllInvoices,
+  useGetAllPayments,
   useGetAllProducts,
   useGetAllVendors,
 } from "../hooks/useQueries";
@@ -23,6 +36,72 @@ interface DashboardOverviewProps {
   onNavigate: (tab: TabName) => void;
 }
 
+function isSameDay(date: Date, today: Date): boolean {
+  return (
+    date.getFullYear() === today.getFullYear() &&
+    date.getMonth() === today.getMonth() &&
+    date.getDate() === today.getDate()
+  );
+}
+
+function getMonthKey(date: Date): string {
+  const months = [
+    "Jan",
+    "Feb",
+    "Mar",
+    "Apr",
+    "May",
+    "Jun",
+    "Jul",
+    "Aug",
+    "Sep",
+    "Oct",
+    "Nov",
+    "Dec",
+  ];
+  return `${months[date.getMonth()]} ${String(date.getFullYear()).slice(2)}`;
+}
+
+function getLast6MonthKeys(): string[] {
+  const months = [
+    "Jan",
+    "Feb",
+    "Mar",
+    "Apr",
+    "May",
+    "Jun",
+    "Jul",
+    "Aug",
+    "Sep",
+    "Oct",
+    "Nov",
+    "Dec",
+  ];
+  const keys: string[] = [];
+  const now = new Date();
+  for (let i = 5; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    keys.push(`${months[d.getMonth()]} ${String(d.getFullYear()).slice(2)}`);
+  }
+  return keys;
+}
+
+const CustomTooltip = ({ active, payload, label }: any) => {
+  if (active && payload && payload.length) {
+    return (
+      <div className="bg-card border border-border rounded-lg p-3 shadow-lg text-xs">
+        <p className="font-semibold text-foreground mb-1">{label}</p>
+        {payload.map((entry: any) => (
+          <p key={entry.name} style={{ color: entry.color }}>
+            {entry.name}: {formatCurrency(Math.round(entry.value * 100))}
+          </p>
+        ))}
+      </div>
+    );
+  }
+  return null;
+};
+
 export default function DashboardOverview({
   onNavigate,
 }: DashboardOverviewProps) {
@@ -30,6 +109,9 @@ export default function DashboardOverview({
   const { data: vendors, isLoading: vendorsLoading } = useGetAllVendors();
   const { data: products, isLoading: productsLoading } = useGetAllProducts();
   const { data: invoices, isLoading: invoicesLoading } = useGetAllInvoices();
+  const { data: payments, isLoading: paymentsLoading } = useGetAllPayments();
+
+  const today = new Date();
 
   const totalInvoiceAmount =
     invoices?.reduce((sum, inv) => sum + Number(inv.total), 0) || 0;
@@ -39,6 +121,46 @@ export default function DashboardOverview({
     invoices?.filter((inv) => inv.status === "pending").length || 0;
   const lowStockProducts =
     products?.filter((p) => Number(p.stock) < 10).length || 0;
+
+  // Today's Sale
+  const todaySale =
+    invoices?.reduce((sum, inv) => {
+      const invDate = new Date(Number(inv.createdAt) / 1_000_000);
+      return isSameDay(invDate, today) ? sum + Number(inv.total) : sum;
+    }, 0) || 0;
+
+  // Today's Collection
+  const todayCollection =
+    payments?.reduce((sum, pay) => {
+      const payDate = new Date(Number(pay.date) / 1_000_000);
+      return isSameDay(payDate, today) ? sum + Number(pay.amount) : sum;
+    }, 0) || 0;
+
+  // Month-wise chart data
+  const last6Months = getLast6MonthKeys();
+  const monthlySales: Record<string, number> = {};
+  const monthlyCollections: Record<string, number> = {};
+  for (const key of last6Months) {
+    monthlySales[key] = 0;
+    monthlyCollections[key] = 0;
+  }
+  for (const inv of invoices || []) {
+    const key = getMonthKey(new Date(Number(inv.createdAt) / 1_000_000));
+    if (key in monthlySales) {
+      monthlySales[key] += Number(inv.total) / 100;
+    }
+  }
+  for (const pay of payments || []) {
+    const key = getMonthKey(new Date(Number(pay.date) / 1_000_000));
+    if (key in monthlyCollections) {
+      monthlyCollections[key] += Number(pay.amount) / 100;
+    }
+  }
+  const chartData = last6Months.map((month) => ({
+    month,
+    Sales: monthlySales[month],
+    Collections: monthlyCollections[month],
+  }));
 
   const stats: {
     title: string;
@@ -127,6 +249,69 @@ export default function DashboardOverview({
           Welcome to ARAA TRADE LUBES! Here's what's happening with your
           business.
         </p>
+      </div>
+
+      {/* Today's Stats */}
+      <div className="grid gap-5 md:grid-cols-2">
+        <Card
+          data-ocid="dashboard.today_sale.card"
+          className="border-2 border-orange-500/20 bg-gradient-to-br from-orange-500/10 via-card to-red-500/5 hover:shadow-xl hover:scale-[1.02] transition-all duration-300 cursor-pointer"
+          onClick={() => onNavigate("invoices")}
+        >
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-semibold text-foreground/80 flex items-center gap-2">
+              <CalendarDays className="h-4 w-4 text-orange-500" />
+              Today's Sale
+            </CardTitle>
+            <div className="rounded-xl p-2.5 bg-gradient-to-br from-orange-500/20 to-red-500/20 border border-orange-500/20">
+              <ShoppingCart className="h-5 w-5 text-orange-500" />
+            </div>
+          </CardHeader>
+          <CardContent>
+            {invoicesLoading ? (
+              <Skeleton className="h-9 w-36" />
+            ) : (
+              <>
+                <div className="text-3xl font-bold bg-gradient-to-r from-orange-500 to-red-500 bg-clip-text text-transparent">
+                  {formatCurrency(todaySale)}
+                </div>
+                <p className="text-xs text-muted-foreground mt-1.5 font-medium">
+                  Invoices raised today
+                </p>
+              </>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card
+          data-ocid="dashboard.today_collection.card"
+          className="border-2 border-green-500/20 bg-gradient-to-br from-green-500/10 via-card to-teal-500/5 hover:shadow-xl hover:scale-[1.02] transition-all duration-300 cursor-pointer"
+          onClick={() => onNavigate("invoices")}
+        >
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-semibold text-foreground/80 flex items-center gap-2">
+              <CalendarDays className="h-4 w-4 text-green-500" />
+              Today's Collection
+            </CardTitle>
+            <div className="rounded-xl p-2.5 bg-gradient-to-br from-green-500/20 to-teal-500/20 border border-green-500/20">
+              <Wallet className="h-5 w-5 text-green-500" />
+            </div>
+          </CardHeader>
+          <CardContent>
+            {paymentsLoading ? (
+              <Skeleton className="h-9 w-36" />
+            ) : (
+              <>
+                <div className="text-3xl font-bold bg-gradient-to-r from-green-500 to-teal-500 bg-clip-text text-transparent">
+                  {formatCurrency(todayCollection)}
+                </div>
+                <p className="text-xs text-muted-foreground mt-1.5 font-medium">
+                  Payments received today
+                </p>
+              </>
+            )}
+          </CardContent>
+        </Card>
       </div>
 
       <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-3">
@@ -296,6 +481,81 @@ export default function DashboardOverview({
           </CardContent>
         </Card>
       </div>
+
+      {/* Month-wise Preview */}
+      <section data-ocid="dashboard.monthly_chart.section">
+        <Card className="border-2 border-primary/10 bg-gradient-to-br from-card to-accent/5">
+          <CardHeader>
+            <CardTitle className="text-xl font-bold bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent flex items-center gap-2">
+              <CalendarDays className="h-5 w-5 text-primary" />
+              Month-wise Preview
+            </CardTitle>
+            <p className="text-sm text-muted-foreground">
+              Sales vs Collections — last 6 months
+            </p>
+          </CardHeader>
+          <CardContent>
+            {invoicesLoading || paymentsLoading ? (
+              <div
+                data-ocid="dashboard.monthly_chart.loading_state"
+                className="space-y-2"
+              >
+                <Skeleton className="h-48 w-full" />
+              </div>
+            ) : (
+              <ResponsiveContainer width="100%" height={260}>
+                <BarChart
+                  data={chartData}
+                  margin={{ top: 4, right: 8, left: 8, bottom: 4 }}
+                  barGap={4}
+                >
+                  <CartesianGrid
+                    strokeDasharray="3 3"
+                    stroke="currentColor"
+                    strokeOpacity={0.08}
+                  />
+                  <XAxis
+                    dataKey="month"
+                    tick={{ fontSize: 12, fill: "currentColor", opacity: 0.6 }}
+                    axisLine={false}
+                    tickLine={false}
+                  />
+                  <YAxis
+                    tick={{ fontSize: 11, fill: "currentColor", opacity: 0.5 }}
+                    axisLine={false}
+                    tickLine={false}
+                    tickFormatter={(v) => `₹${(v / 1000).toFixed(0)}k`}
+                    width={52}
+                  />
+                  <Tooltip content={<CustomTooltip />} />
+                  <Bar
+                    dataKey="Sales"
+                    fill="#f97316"
+                    radius={[4, 4, 0, 0]}
+                    maxBarSize={40}
+                  />
+                  <Bar
+                    dataKey="Collections"
+                    fill="#22c55e"
+                    radius={[4, 4, 0, 0]}
+                    maxBarSize={40}
+                  />
+                </BarChart>
+              </ResponsiveContainer>
+            )}
+            <div className="flex items-center gap-6 mt-4 justify-center text-xs text-muted-foreground">
+              <span className="flex items-center gap-1.5">
+                <span className="inline-block h-3 w-3 rounded-sm bg-orange-500" />
+                Sales
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="inline-block h-3 w-3 rounded-sm bg-green-500" />
+                Collections
+              </span>
+            </div>
+          </CardContent>
+        </Card>
+      </section>
     </div>
   );
 }

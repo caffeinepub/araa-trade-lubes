@@ -37,6 +37,7 @@ import {
   useDeleteInvoice,
   useGetAllCustomers,
   useGetAllInvoices,
+  useGetAllPayments,
   useGetAllProducts,
   useRecordPayment,
 } from "../hooks/useQueries";
@@ -46,6 +47,7 @@ import {
   calculateLineItemGst,
   calculateSummaryFromBreakups,
   formatPaiseToINR,
+  inclusivePriceToBase,
 } from "../lib/gstUtils";
 import InvoiceDetails from "./InvoiceDetails";
 
@@ -55,11 +57,13 @@ function nextLineItemId() {
   return lineItemCounter;
 }
 
+const todayStr = () => new Date().toISOString().split("T")[0];
+
 interface InvoiceLineItem {
   uid: number;
   productId: bigint;
   quantity: number;
-  price: number; // in rupees (display)
+  price: number; // in rupees — this is the INCLUSIVE (final) price entered by user
 }
 
 export default function InvoicesTab() {
@@ -68,6 +72,7 @@ export default function InvoicesTab() {
     useGetAllInvoices();
   const { data: customers = [] } = useGetAllCustomers();
   const { data: products = [] } = useGetAllProducts();
+  const { data: allPayments = [] } = useGetAllPayments();
 
   const addInvoiceMutation = useAddInvoice();
   const deleteInvoiceMutation = useDeleteInvoice();
@@ -85,7 +90,9 @@ export default function InvoicesTab() {
   const [lineItems, setLineItems] = useState<InvoiceLineItem[]>([
     { uid: nextLineItemId(), productId: 0n, quantity: 1, price: 0 },
   ]);
+  const [invoiceDate, setInvoiceDate] = useState<string>(todayStr());
   const [paymentAmount, setPaymentAmount] = useState<string>("");
+  const [paymentDate, setPaymentDate] = useState<string>(todayStr());
 
   const getCustomerName = (customerId: bigint) => {
     const customer = customers.find((c) => c.id === customerId);
@@ -132,7 +139,8 @@ export default function InvoicesTab() {
     updatedItems[index] = {
       ...updatedItems[index],
       productId: product ? product.id : 0n,
-      // price in rupees for display; backend stores in paise
+      // price in rupees for display; backend stores base in paise
+      // product.price is already the base price — display it as-is
       price: product ? Number(product.price) / 100 : 0,
     };
     setLineItems(updatedItems);
@@ -151,18 +159,32 @@ export default function InvoicesTab() {
   };
 
   /**
+   * Convert inclusive price (rupees) to base paise for backend/calculation.
+   * Backend expects taxable base price (pre-GST) in paise.
+   */
+  const inclusiveRupeesToBasePaise = (
+    inclusiveRupees: number,
+    taxRate: bigint,
+  ): bigint => {
+    const inclusivePaise = BigInt(Math.round(inclusiveRupees * 100));
+    return inclusivePriceToBase(inclusivePaise, taxRate);
+  };
+
+  /**
    * Build GstLineItem array from current form state for preview.
-   * Prices are entered in rupees; convert to paise for calculation.
+   * Prices entered by user are inclusive — back-calculate base for calculation.
    */
   const buildGstLineItems = (): GstLineItem[] => {
     return lineItems
       .filter((item) => item.productId !== 0n)
       .map((item) => {
         const product = getProductById(item.productId);
+        const taxRate = product ? product.taxRate : 0n;
+        // For preview: use inclusive price as-is in gstUtils which will back-calc
         return {
-          price: BigInt(Math.round(item.price * 100)), // rupees -> paise
+          price: BigInt(Math.round(item.price * 100)), // inclusive paise per unit
           quantity: BigInt(item.quantity),
-          taxRate: product ? product.taxRate : 0n,
+          taxRate,
           hsnSacCode: product ? product.hsnSacCode : "",
         };
       });
@@ -176,6 +198,7 @@ export default function InvoicesTab() {
           let cgst = 0n;
           let sgst = 0n;
           let igst = 0n;
+
           for (const item of items) {
             const b = calculateLineItemGst(item);
             taxableAmount += b.taxableAmount;
@@ -183,9 +206,20 @@ export default function InvoicesTab() {
             sgst += b.sgst;
             igst += b.igst;
           }
+          // Grand total = sum of inclusive prices entered (price * qty)
+          const enteredTotal = items.reduce(
+            (sum, item) => sum + item.price * item.quantity,
+            0n,
+          );
           const totalTax = cgst + sgst + igst;
-          const totalAmount = taxableAmount + totalTax;
-          return { taxableAmount, cgst, sgst, igst, totalTax, totalAmount };
+          return {
+            taxableAmount,
+            cgst,
+            sgst,
+            igst,
+            totalTax,
+            totalAmount: enteredTotal,
+          };
         })()
       : null;
 
@@ -205,12 +239,19 @@ export default function InvoicesTab() {
     try {
       await addInvoiceMutation.mutateAsync({
         customerId: BigInt(selectedCustomerId),
-        items: validItems.map((item) => ({
-          productId: item.productId,
-          quantity: BigInt(item.quantity),
-          // price in paise (backend expects paise)
-          price: BigInt(Math.round(item.price * 100)),
-        })),
+        items: validItems.map((item) => {
+          const product = getProductById(item.productId);
+          const taxRate = product ? product.taxRate : 0n;
+          // Send back-calculated BASE price to backend (pre-GST paise)
+          // Backend will add GST on top of this base, giving the inclusive total
+          const basePaise = inclusiveRupeesToBasePaise(item.price, taxRate);
+          return {
+            productId: item.productId,
+            quantity: BigInt(item.quantity),
+            price: basePaise,
+          };
+        }),
+        invoiceDate: invoiceDate ? new Date(invoiceDate) : undefined,
       });
       toast.success("Invoice created successfully");
       setIsAddDialogOpen(false);
@@ -218,6 +259,7 @@ export default function InvoicesTab() {
       setLineItems([
         { uid: nextLineItemId(), productId: 0n, quantity: 1, price: 0 },
       ]);
+      setInvoiceDate(todayStr());
       queryClient.invalidateQueries({ queryKey: ["invoices"] });
     } catch (error) {
       console.error("Failed to create invoice:", error);
@@ -238,6 +280,13 @@ export default function InvoicesTab() {
     }
   };
 
+  /** Calculate total amount already paid against a specific invoice */
+  const getPaidAmountForInvoice = (invoiceId: bigint): bigint => {
+    return allPayments
+      .filter((p) => p.invoiceId === invoiceId)
+      .reduce((sum, p) => sum + p.amount, 0n);
+  };
+
   const handleRecordPayment = async () => {
     if (!selectedInvoice || !paymentAmount) return;
     const parsedAmount = Number.parseFloat(paymentAmount);
@@ -245,22 +294,45 @@ export default function InvoicesTab() {
       toast.error("Please enter a valid payment amount");
       return;
     }
+
+    // Warn if overpaying, but don't block
+    const alreadyPaidPaise = getPaidAmountForInvoice(selectedInvoice.id);
+    const remainingPaise = selectedInvoice.total - alreadyPaidPaise;
+    const enteredPaise = BigInt(Math.round(parsedAmount * 100));
+    if (enteredPaise > remainingPaise && remainingPaise > 0n) {
+      toast.warning(
+        `Amount exceeds remaining balance of ${formatPaiseToINR(remainingPaise)}. Payment will be recorded as advance.`,
+      );
+    }
+
     try {
       // paymentAmount entered in rupees; convert to paise
       const amountPaise = BigInt(Math.round(parsedAmount * 100));
       await recordPaymentMutation.mutateAsync({
         invoiceId: selectedInvoice.id,
         amount: amountPaise,
+        paymentDate: paymentDate ? new Date(paymentDate) : undefined,
       });
       toast.success(
         `Payment of ₹${parsedAmount.toFixed(2)} recorded for Invoice #${String(selectedInvoice.id)}`,
       );
       setIsPaymentDialogOpen(false);
       setPaymentAmount("");
+      setPaymentDate(todayStr());
       setSelectedInvoice(null);
-      queryClient.invalidateQueries({ queryKey: ["invoices"] });
-      queryClient.invalidateQueries({ queryKey: ["customerFinancialSummary"] });
-      queryClient.invalidateQueries({ queryKey: ["customerStatement"] });
+      // Invalidate and force-refetch all related queries
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["invoices"] }),
+        queryClient.invalidateQueries({ queryKey: ["payments"] }),
+        queryClient.invalidateQueries({
+          queryKey: ["customerFinancialSummary"],
+        }),
+        queryClient.invalidateQueries({ queryKey: ["customerStatement"] }),
+      ]);
+      await Promise.all([
+        queryClient.refetchQueries({ queryKey: ["invoices"] }),
+        queryClient.refetchQueries({ queryKey: ["payments"] }),
+      ]);
     } catch (error) {
       console.error("Failed to record payment:", error);
       toast.error(
@@ -271,6 +343,7 @@ export default function InvoicesTab() {
 
   const openPaymentDialog = (invoice: Invoice) => {
     setSelectedInvoice(invoice);
+    setPaymentDate(todayStr());
     setIsPaymentDialogOpen(true);
   };
 
@@ -303,7 +376,11 @@ export default function InvoicesTab() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h2 className="text-xl font-semibold text-foreground">Invoices</h2>
-        <Button onClick={() => setIsAddDialogOpen(true)} className="gap-2">
+        <Button
+          data-ocid="invoice.new_invoice.primary_button"
+          onClick={() => setIsAddDialogOpen(true)}
+          className="gap-2"
+        >
           <Plus className="h-4 w-4" />
           New Invoice
         </Button>
@@ -311,7 +388,7 @@ export default function InvoicesTab() {
 
       {/* Invoice Table */}
       <div className="rounded-lg border border-border overflow-hidden">
-        <Table>
+        <Table data-ocid="invoice.list.table">
           <TableHeader>
             <TableRow className="bg-muted/50">
               <TableHead>Invoice #</TableHead>
@@ -332,6 +409,7 @@ export default function InvoicesTab() {
                 <TableCell
                   colSpan={10}
                   className="text-center py-8 text-muted-foreground"
+                  data-ocid="invoice.list.empty_state"
                 >
                   No invoices found. Create your first invoice.
                 </TableCell>
@@ -403,7 +481,13 @@ export default function InvoicesTab() {
       </div>
 
       {/* Add Invoice Dialog */}
-      <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
+      <Dialog
+        open={isAddDialogOpen}
+        onOpenChange={(open) => {
+          setIsAddDialogOpen(open);
+          if (!open) setInvoiceDate(todayStr());
+        }}
+      >
         <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Create New Invoice</DialogTitle>
@@ -414,6 +498,7 @@ export default function InvoicesTab() {
               <Label htmlFor="customer">Customer</Label>
               <select
                 id="customer"
+                data-ocid="invoice.customer.select"
                 value={selectedCustomerId}
                 onChange={(e) => setSelectedCustomerId(e.target.value)}
                 className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring"
@@ -427,89 +512,160 @@ export default function InvoicesTab() {
               </select>
             </div>
 
+            {/* Invoice Date */}
+            <div className="space-y-2">
+              <Label htmlFor="invoiceDate">Invoice Date</Label>
+              <input
+                id="invoiceDate"
+                data-ocid="invoice.invoice_date.input"
+                type="date"
+                value={invoiceDate}
+                onChange={(e) => setInvoiceDate(e.target.value)}
+                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring"
+              />
+            </div>
+
             {/* Line Items */}
             <div className="space-y-3">
-              <Label>Line Items</Label>
+              <div className="flex items-center gap-2">
+                <Label>Line Items</Label>
+                <span className="text-xs text-muted-foreground bg-muted/50 px-2 py-0.5 rounded-full">
+                  Enter final/inclusive price — GST will be extracted
+                  automatically
+                </span>
+              </div>
               {lineItems.map((item, index) => {
                 const product = getProductById(item.productId);
+                const taxRate = product ? product.taxRate : 0n;
+                // Live breakdown for this line item
+                const liveBreakup =
+                  item.productId !== 0n && item.price > 0
+                    ? calculateLineItemGst({
+                        price: BigInt(Math.round(item.price * 100)),
+                        quantity: BigInt(item.quantity),
+                        taxRate,
+                        hsnSacCode: product ? product.hsnSacCode : "",
+                      })
+                    : null;
+
                 return (
-                  <div
-                    key={item.uid}
-                    className="grid grid-cols-12 gap-2 items-end"
-                  >
-                    <div className="col-span-5">
-                      <Label className="text-xs text-muted-foreground">
-                        Product
-                      </Label>
-                      <select
-                        value={
-                          item.productId === 0n ? "" : String(item.productId)
-                        }
-                        onChange={(e) =>
-                          handleProductChange(index, e.target.value)
-                        }
-                        className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring"
-                      >
-                        <option value="">Select product</option>
-                        {products.map((p) => (
-                          <option key={String(p.id)} value={String(p.id)}>
-                            {p.name}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                    <div className="col-span-2">
-                      <Label className="text-xs text-muted-foreground">
-                        Qty
-                      </Label>
-                      <Input
-                        type="number"
-                        min="1"
-                        value={item.quantity}
-                        onChange={(e) =>
-                          handleQuantityChange(
-                            index,
-                            Number.parseInt(e.target.value) || 1,
-                          )
-                        }
-                      />
-                    </div>
-                    <div className="col-span-3">
-                      <Label className="text-xs text-muted-foreground">
-                        Price (₹)
-                      </Label>
-                      <Input
-                        type="number"
-                        min="0"
-                        step="0.01"
-                        value={item.price}
-                        onChange={(e) =>
-                          handlePriceChange(
-                            index,
-                            Number.parseFloat(e.target.value) || 0,
-                          )
-                        }
-                      />
-                    </div>
-                    <div className="col-span-1">
-                      <Label className="text-xs text-muted-foreground">
-                        GST%
-                      </Label>
-                      <div className="py-2 text-sm text-muted-foreground">
-                        {product ? `${Number(product.taxRate) / 100}%` : "-"}
+                  <div key={item.uid} className="space-y-1">
+                    <div className="grid grid-cols-12 gap-2 items-end">
+                      <div className="col-span-5">
+                        <Label className="text-xs text-muted-foreground">
+                          Product
+                        </Label>
+                        <select
+                          value={
+                            item.productId === 0n ? "" : String(item.productId)
+                          }
+                          onChange={(e) =>
+                            handleProductChange(index, e.target.value)
+                          }
+                          className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring"
+                        >
+                          <option value="">Select product</option>
+                          {products.map((p) => (
+                            <option key={String(p.id)} value={String(p.id)}>
+                              {p.name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="col-span-2">
+                        <Label className="text-xs text-muted-foreground">
+                          Qty
+                        </Label>
+                        <Input
+                          type="number"
+                          min="1"
+                          value={item.quantity}
+                          onChange={(e) =>
+                            handleQuantityChange(
+                              index,
+                              Number.parseInt(e.target.value) || 1,
+                            )
+                          }
+                        />
+                      </div>
+                      <div className="col-span-3">
+                        <Label className="text-xs text-muted-foreground">
+                          Price incl. GST (₹)
+                        </Label>
+                        <Input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={item.price}
+                          onChange={(e) =>
+                            handlePriceChange(
+                              index,
+                              Number.parseFloat(e.target.value) || 0,
+                            )
+                          }
+                        />
+                      </div>
+                      <div className="col-span-1">
+                        <Label className="text-xs text-muted-foreground">
+                          GST%
+                        </Label>
+                        <div className="py-2 text-sm text-muted-foreground">
+                          {product ? `${Number(product.taxRate) / 100}%` : "-"}
+                        </div>
+                      </div>
+                      <div className="col-span-1">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => handleRemoveLineItem(index)}
+                          disabled={lineItems.length === 1}
+                          className="text-destructive hover:text-destructive"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
                       </div>
                     </div>
-                    <div className="col-span-1">
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => handleRemoveLineItem(index)}
-                        disabled={lineItems.length === 1}
-                        className="text-destructive hover:text-destructive"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </div>
+                    {/* Inline GST breakdown for this item */}
+                    {liveBreakup && taxRate > 0n && (
+                      <div className="ml-1 text-xs text-muted-foreground flex flex-wrap gap-x-4 gap-y-0.5 bg-muted/30 rounded px-2 py-1">
+                        <span>
+                          Base:{" "}
+                          <strong>
+                            {formatPaiseToINR(liveBreakup.taxableAmount)}
+                          </strong>
+                        </span>
+                        {liveBreakup.cgst > 0n && (
+                          <>
+                            <span>
+                              CGST ({Number(taxRate) / 200}%):{" "}
+                              <strong>
+                                {formatPaiseToINR(liveBreakup.cgst)}
+                              </strong>
+                            </span>
+                            <span>
+                              SGST ({Number(taxRate) / 200}%):{" "}
+                              <strong>
+                                {formatPaiseToINR(liveBreakup.sgst)}
+                              </strong>
+                            </span>
+                          </>
+                        )}
+                        {liveBreakup.igst > 0n && (
+                          <span>
+                            IGST ({Number(taxRate) / 100}%):{" "}
+                            <strong>
+                              {formatPaiseToINR(liveBreakup.igst)}
+                            </strong>
+                          </span>
+                        )}
+                        <span>
+                          Total:{" "}
+                          <strong className="text-foreground">
+                            ₹{item.price.toFixed(2)}
+                          </strong>
+                        </span>
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -527,7 +683,9 @@ export default function InvoicesTab() {
             {/* GST Preview */}
             {previewSummary && (
               <div className="rounded-lg border border-border bg-muted/30 p-4 space-y-2">
-                <h4 className="font-medium text-sm">GST Preview</h4>
+                <h4 className="font-medium text-sm">
+                  Invoice Summary (GST Inclusive)
+                </h4>
                 <div className="grid grid-cols-2 gap-x-8 gap-y-1 text-sm">
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">
@@ -568,6 +726,7 @@ export default function InvoicesTab() {
               Cancel
             </Button>
             <Button
+              data-ocid="invoice.create.submit_button"
               onClick={handleCreateInvoice}
               disabled={
                 !selectedCustomerId ||
@@ -589,46 +748,120 @@ export default function InvoicesTab() {
       </Dialog>
 
       {/* Record Payment Dialog */}
-      <Dialog open={isPaymentDialogOpen} onOpenChange={setIsPaymentDialogOpen}>
+      <Dialog
+        open={isPaymentDialogOpen}
+        onOpenChange={(open) => {
+          setIsPaymentDialogOpen(open);
+          if (!open) {
+            setPaymentAmount("");
+            setPaymentDate(todayStr());
+          }
+        }}
+      >
         <DialogContent data-ocid="invoice.record_payment.dialog">
           <DialogHeader>
             <DialogTitle>Record Payment</DialogTitle>
           </DialogHeader>
-          {selectedInvoice && (
-            <div className="space-y-4">
-              <div className="rounded-lg bg-muted/30 p-3 text-sm space-y-1">
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Invoice #:</span>
-                  <span className="font-medium">
-                    {String(selectedInvoice.id)}
-                  </span>
+          {selectedInvoice &&
+            (() => {
+              const alreadyPaidPaise = getPaidAmountForInvoice(
+                selectedInvoice.id,
+              );
+              const remainingPaise =
+                selectedInvoice.total > alreadyPaidPaise
+                  ? selectedInvoice.total - alreadyPaidPaise
+                  : 0n;
+              const enteredPaise = paymentAmount
+                ? BigInt(
+                    Math.round((Number.parseFloat(paymentAmount) || 0) * 100),
+                  )
+                : 0n;
+              const isOverpaying =
+                enteredPaise > remainingPaise && remainingPaise > 0n;
+
+              return (
+                <div className="space-y-4">
+                  <div className="rounded-lg bg-muted/30 p-3 text-sm space-y-1.5">
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Invoice #:</span>
+                      <span className="font-medium">
+                        {String(selectedInvoice.id)}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Customer:</span>
+                      <span>{getCustomerName(selectedInvoice.customerId)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">
+                        Invoice Total:
+                      </span>
+                      <span className="font-semibold">
+                        {formatInvoiceTotal(selectedInvoice.total)}
+                      </span>
+                    </div>
+                    {alreadyPaidPaise > 0n && (
+                      <div className="flex justify-between text-success">
+                        <span>Previously Paid:</span>
+                        <span className="font-medium">
+                          {formatPaiseToINR(alreadyPaidPaise)}
+                        </span>
+                      </div>
+                    )}
+                    <div className="flex justify-between border-t border-border pt-1.5 mt-0.5">
+                      <span className="text-muted-foreground font-medium">
+                        Remaining Balance:
+                      </span>
+                      <span
+                        className={`font-bold ${
+                          remainingPaise === 0n
+                            ? "text-success"
+                            : "text-destructive"
+                        }`}
+                      >
+                        {remainingPaise === 0n
+                          ? "Fully Paid"
+                          : formatPaiseToINR(remainingPaise)}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="paymentDate">Payment Date</Label>
+                    <input
+                      id="paymentDate"
+                      data-ocid="invoice.payment_date.input"
+                      type="date"
+                      value={paymentDate}
+                      onChange={(e) => setPaymentDate(e.target.value)}
+                      className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="paymentAmount">Payment Amount (₹)</Label>
+                    <Input
+                      id="paymentAmount"
+                      data-ocid="invoice.payment_amount.input"
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      placeholder={`Enter amount in rupees (balance: ${formatPaiseToINR(remainingPaise)})`}
+                      value={paymentAmount}
+                      onChange={(e) => setPaymentAmount(e.target.value)}
+                    />
+                    {isOverpaying && (
+                      <p
+                        data-ocid="invoice.payment_overpay.error_state"
+                        className="text-xs text-warning font-medium"
+                      >
+                        ⚠ Amount exceeds remaining balance of{" "}
+                        {formatPaiseToINR(remainingPaise)}. This will be
+                        recorded as an advance payment.
+                      </p>
+                    )}
+                  </div>
                 </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Customer:</span>
-                  <span>{getCustomerName(selectedInvoice.customerId)}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Invoice Total:</span>
-                  <span className="font-semibold">
-                    {formatInvoiceTotal(selectedInvoice.total)}
-                  </span>
-                </div>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="paymentAmount">Payment Amount (₹)</Label>
-                <Input
-                  id="paymentAmount"
-                  data-ocid="invoice.payment_amount.input"
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  placeholder="Enter amount in rupees"
-                  value={paymentAmount}
-                  onChange={(e) => setPaymentAmount(e.target.value)}
-                />
-              </div>
-            </div>
-          )}
+              );
+            })()}
           <DialogFooter>
             <Button
               variant="outline"

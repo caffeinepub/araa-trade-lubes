@@ -107,3 +107,110 @@ export function preparePaymentsForExport(payments: Payment[]) {
     "Payment Date": formatDateForExport(payment.date),
   }));
 }
+
+// ─── CSV Import / Restore ────────────────────────────────────────────────────
+
+export function parseCSV(csvText: string): Record<string, string>[] {
+  const lines = csvText.trim().split("\n");
+  if (lines.length < 2) return [];
+
+  const parseRow = (line: string): string[] => {
+    const result: string[] = [];
+    let current = "";
+    let inQuotes = false;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (ch === '"') {
+        if (inQuotes && line[i + 1] === '"') {
+          current += '"';
+          i++;
+        } else {
+          inQuotes = !inQuotes;
+        }
+      } else if (ch === "," && !inQuotes) {
+        result.push(current);
+        current = "";
+      } else {
+        current += ch;
+      }
+    }
+    result.push(current);
+    return result;
+  };
+
+  const headers = parseRow(lines[0]);
+  const rows: Record<string, string>[] = [];
+
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line) continue;
+    const values = parseRow(line);
+    const row: Record<string, string> = {};
+    headers.forEach((header, idx) => {
+      row[header.trim()] = (values[idx] ?? "").trim();
+    });
+    rows.push(row);
+  }
+
+  return rows;
+}
+
+export function parseCustomersFromCSV(csvText: string): Array<{
+  name: string;
+  phone: string;
+  email: string;
+  address: string;
+  gstNumber: string;
+}> {
+  const rows = parseCSV(csvText);
+  return rows
+    .filter((row) => row.Name)
+    .map((row) => ({
+      name: row.Name ?? "",
+      phone: row.Phone ?? "",
+      email: row.Email ?? "",
+      address: row.Address ?? "",
+      gstNumber: row["GST Number"] ?? "",
+    }));
+}
+
+export function parseVendorsFromCSV(
+  csvText: string,
+): Array<{ name: string; phone: string; email: string; address: string }> {
+  const rows = parseCSV(csvText);
+  return rows
+    .filter((row) => row.Name)
+    .map((row) => ({
+      name: row.Name ?? "",
+      phone: row.Phone ?? "",
+      email: row.Email ?? "",
+      address: row.Address ?? "",
+    }));
+}
+
+export function parseProductsFromCSV(csvText: string): Array<{
+  name: string;
+  description: string;
+  sku: string;
+  price: bigint;
+  stock: bigint;
+  hsnSacCode: string;
+  taxRate: bigint;
+}> {
+  const rows = parseCSV(csvText);
+  return rows
+    .filter((row) => row.Name)
+    .map((row) => {
+      const priceRaw = Number.parseFloat(row["Price (INR)"] ?? "0") || 0;
+      const stockRaw = Number.parseInt(row.Stock ?? "0", 10) || 0;
+      return {
+        name: row.Name ?? "",
+        description: row.Description ?? "",
+        sku: row.SKU ?? "",
+        price: BigInt(Math.round(priceRaw * 100)),
+        stock: BigInt(stockRaw),
+        hsnSacCode: "",
+        taxRate: 0n,
+      };
+    });
+}

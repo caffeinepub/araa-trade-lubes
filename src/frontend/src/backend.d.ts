@@ -148,7 +148,7 @@ export enum Variant_sale_payment {
 }
 export interface backendInterface {
     addCustomer(name: string, phone: string, email: string, address: string, gstNumber: string, state: string | null): Promise<bigint>;
-    addInvoice(customerId: bigint, items: Array<InvoiceItem>): Promise<bigint>;
+    addInvoice(customerId: bigint, items: Array<InvoiceItem>, invoiceDate: bigint | null): Promise<bigint>;
     addProduct(name: string, description: string, price: bigint, sku: string, stock: bigint, hsnSacCode: string, taxRate: bigint): Promise<bigint>;
     addVendor(name: string, phone: string, email: string, address: string): Promise<bigint>;
     assignCallerUserRole(user: Principal, role: UserRole): Promise<void>;
@@ -178,7 +178,7 @@ export interface backendInterface {
     getVendor(id: bigint): Promise<Vendor>;
     isCallerAdmin(): Promise<boolean>;
     isStripeConfigured(): Promise<boolean>;
-    recordPayment(invoiceId: bigint, amount: bigint): Promise<bigint>;
+    recordPayment(invoiceId: bigint, amount: bigint, paymentDate: bigint | null): Promise<bigint>;
     saveCallerUserProfile(profile: UserProfile): Promise<void>;
     setStripeConfiguration(config: StripeConfiguration): Promise<void>;
     transform(input: TransformationInput): Promise<TransformationOutput>;

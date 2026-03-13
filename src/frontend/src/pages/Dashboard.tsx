@@ -1,5 +1,6 @@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
+  BarChart2,
   Building2,
   Download,
   FileText,
@@ -13,6 +14,7 @@ import DashboardOverview from "../components/DashboardOverview";
 import DataExport from "../components/DataExport";
 import InvoicesTab from "../components/InvoicesTab";
 import ProductsTab from "../components/ProductsTab";
+import ReportsTab from "../components/ReportsTab";
 import VendorsTab from "../components/VendorsTab";
 
 export type TabName =
@@ -21,7 +23,8 @@ export type TabName =
   | "vendors"
   | "products"
   | "invoices"
-  | "export";
+  | "export"
+  | "reports";
 
 export default function Dashboard() {
   const [activeTab, setActiveTab] = useState<TabName>("overview");
@@ -33,7 +36,7 @@ export default function Dashboard() {
         onValueChange={(v) => setActiveTab(v as TabName)}
         className="space-y-6"
       >
-        <TabsList className="grid w-full grid-cols-3 lg:grid-cols-6 gap-2">
+        <TabsList className="grid w-full grid-cols-4 lg:grid-cols-7 gap-2">
           <TabsTrigger
             value="overview"
             className="flex items-center gap-2"
@@ -75,6 +78,14 @@ export default function Dashboard() {
             <span className="hidden sm:inline">Invoices</span>
           </TabsTrigger>
           <TabsTrigger
+            value="reports"
+            className="flex items-center gap-2"
+            data-ocid="nav.reports.tab"
+          >
+            <BarChart2 className="h-4 w-4" />
+            <span className="hidden sm:inline">Reports</span>
+          </TabsTrigger>
+          <TabsTrigger
             value="export"
             className="flex items-center gap-2"
             data-ocid="nav.export.tab"
@@ -102,6 +113,10 @@ export default function Dashboard() {
 
         <TabsContent value="invoices">
           <InvoicesTab />
+        </TabsContent>
+
+        <TabsContent value="reports">
+          <ReportsTab />
         </TabsContent>
 
         <TabsContent value="export">

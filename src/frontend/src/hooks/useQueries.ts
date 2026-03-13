@@ -388,9 +388,17 @@ export function useAddInvoice() {
     mutationFn: async (params: {
       customerId: bigint;
       items: InvoiceItem[];
+      invoiceDate?: Date;
     }) => {
       if (!actor) throw new Error("Actor not available");
-      return actor.addInvoice(params.customerId, params.items);
+      const invoiceDateNs: bigint | null = params.invoiceDate
+        ? BigInt(params.invoiceDate.getTime()) * 1_000_000n
+        : null;
+      return (actor as any).addInvoice(
+        params.customerId,
+        params.items,
+        invoiceDateNs,
+      );
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["invoices"] });
@@ -437,9 +445,20 @@ export function useRecordPayment() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async (params: { invoiceId: bigint; amount: bigint }) => {
+    mutationFn: async (params: {
+      invoiceId: bigint;
+      amount: bigint;
+      paymentDate?: Date;
+    }) => {
       if (!actor) throw new Error("Actor not available");
-      return actor.recordPayment(params.invoiceId, params.amount);
+      const paymentDateNs: bigint | null = params.paymentDate
+        ? BigInt(params.paymentDate.getTime()) * 1_000_000n
+        : null;
+      return (actor as any).recordPayment(
+        params.invoiceId,
+        params.amount,
+        paymentDateNs,
+      );
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["payments"] });

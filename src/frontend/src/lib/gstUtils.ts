@@ -5,19 +5,26 @@
  * taxRate is stored as an integer where 1800 = 18.00%, 500 = 5.00%, etc.
  * (i.e., taxRate / 10000 gives the decimal rate, matching backend formula)
  *
- * Backend formula:
- *   halfTaxRate = taxRate / 2  (integer division)
- *   sgst = (taxableAmount * halfTaxRate) / 10000  (integer division)
- *   cgst = (taxableAmount * halfTaxRate) / 10000  (integer division)
- *   igst = (taxableAmount * taxRate) / 10000       (integer division)
+ * GST-INCLUSIVE pricing model:
+ *   The price entered by the user is the FINAL/inclusive price (GST already included).
+ *   Back-calculate taxable amount: taxableAmount = inclusivePrice * 10000 / (10000 + taxRate)
+ *   Then GST is extracted: CGST = taxableAmount * (taxRate/2) / 10000, etc.
+ *   Grand total = original inclusive price entered.
  *
- * This module mirrors that logic exactly using BigInt arithmetic.
+ * Backend formula (uses taxableAmount as base, adds GST on top):
+ *   halfTaxRate = taxRate / 2
+ *   sgst = (taxableAmount * halfTaxRate) / 10000
+ *   cgst = (taxableAmount * halfTaxRate) / 10000
+ *   igst = (taxableAmount * taxRate) / 10000
+ *
+ * To keep frontend+backend in sync: we back-calculate the taxable base from the
+ * inclusive price, then send that base to the backend as the item price.
  */
 
 import type { GstBreakup } from "../backend";
 
 export interface GstLineItem {
-  price: bigint; // unit price in paise
+  price: bigint; // unit price in paise (this is the INCLUSIVE price entered by user)
   quantity: bigint;
   taxRate: bigint; // e.g. 1800 for 18%
   hsnSacCode: string; // non-empty => CGST+SGST (intra-state)
@@ -29,20 +36,35 @@ export interface GstSummary {
   sgst: bigint; // paise
   igst: bigint; // paise
   totalTax: bigint; // paise
-  totalAmount: bigint; // paise
+  totalAmount: bigint; // paise (equals the inclusive price entered)
 }
 
 /**
- * Calculate GST breakup for a single line item.
- * Mirrors backend calculateWithCgstSgst / calculateWithIgst exactly.
+ * Back-calculate the taxable base from an inclusive price.
+ * inclusiveTotal = taxableAmount + GST
+ * taxableAmount = inclusiveTotal * 10000 / (10000 + taxRate)
+ */
+export function inclusivePriceToBase(
+  inclusivePaise: bigint,
+  taxRate: bigint,
+): bigint {
+  if (taxRate === 0n) return inclusivePaise;
+  return (inclusivePaise * 10000n) / (10000n + taxRate);
+}
+
+/**
+ * Calculate GST breakup for a single line item using GST-INCLUSIVE pricing.
+ * The price is the inclusive total per unit; we back-calculate taxable amount.
+ * Mirrors backend calculateWithCgstSgst / calculateWithIgst exactly once base is known.
  */
 export function calculateLineItemGst(item: GstLineItem): GstBreakup {
-  const taxableAmount = item.price * item.quantity;
   const taxRate = item.taxRate;
+  // Back-calculate per-unit taxable base from inclusive price
+  const unitBase = inclusivePriceToBase(item.price, taxRate);
+  const taxableAmount = unitBase * item.quantity;
 
   if (item.hsnSacCode && item.hsnSacCode.trim() !== "") {
     // Intra-state: CGST + SGST
-    // Backend: halfTaxRate = taxRate / 2 (integer division)
     const halfTaxRate = taxRate / 2n;
     const sgst = (taxableAmount * halfTaxRate) / 10000n;
     const cgst = (taxableAmount * halfTaxRate) / 10000n;
@@ -71,7 +93,7 @@ export function calculateLineItemGst(item: GstLineItem): GstBreakup {
 }
 
 /**
- * Calculate invoice GST summary from line items.
+ * Calculate invoice GST summary from line items (inclusive pricing).
  * Returns aggregated totals across all line items.
  */
 export function calculateInvoiceSummary(items: GstLineItem[]): GstSummary {
@@ -79,6 +101,7 @@ export function calculateInvoiceSummary(items: GstLineItem[]): GstSummary {
   let cgst = 0n;
   let sgst = 0n;
   let igst = 0n;
+  let totalAmount = 0n;
 
   for (const item of items) {
     const breakup = calculateLineItemGst(item);
@@ -86,10 +109,10 @@ export function calculateInvoiceSummary(items: GstLineItem[]): GstSummary {
     cgst += breakup.cgst;
     sgst += breakup.sgst;
     igst += breakup.igst;
+    totalAmount += breakup.totalAmount;
   }
 
   const totalTax = cgst + sgst + igst;
-  const totalAmount = taxableAmount + totalTax;
 
   return { taxableAmount, cgst, sgst, igst, totalTax, totalAmount };
 }
