@@ -391,9 +391,9 @@ export function useAddInvoice() {
       invoiceDate?: Date;
     }) => {
       if (!actor) throw new Error("Actor not available");
-      const invoiceDateNs: bigint | null = params.invoiceDate
-        ? BigInt(params.invoiceDate.getTime()) * 1_000_000n
-        : null;
+      const invoiceDateNs: [bigint] | [] = params.invoiceDate
+        ? [BigInt(params.invoiceDate.getTime()) * 1_000_000n]
+        : [];
       return (actor as any).addInvoice(
         params.customerId,
         params.items,
@@ -451,9 +451,9 @@ export function useRecordPayment() {
       paymentDate?: Date;
     }) => {
       if (!actor) throw new Error("Actor not available");
-      const paymentDateNs: bigint | null = params.paymentDate
-        ? BigInt(params.paymentDate.getTime()) * 1_000_000n
-        : null;
+      const paymentDateNs: [bigint] | [] = params.paymentDate
+        ? [BigInt(params.paymentDate.getTime()) * 1_000_000n]
+        : [];
       return (actor as any).recordPayment(
         params.invoiceId,
         params.amount,

@@ -96,6 +96,10 @@ export default function InvoicesTab() {
   const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
   const [invoiceToDelete, setInvoiceToDelete] = useState<bigint | null>(null);
 
+  // Date picker popover open states
+  const [invoiceDatePopoverOpen, setInvoiceDatePopoverOpen] = useState(false);
+  const [paymentDatePopoverOpen, setPaymentDatePopoverOpen] = useState(false);
+
   // Form state
   const [selectedCustomerId, setSelectedCustomerId] = useState<string>("");
   const [lineItems, setLineItems] = useState<InvoiceLineItem[]>([
@@ -505,7 +509,10 @@ export default function InvoicesTab() {
             {/* Invoice Date Picker */}
             <div className="space-y-2">
               <Label>Invoice Date</Label>
-              <Popover>
+              <Popover
+                open={invoiceDatePopoverOpen}
+                onOpenChange={setInvoiceDatePopoverOpen}
+              >
                 <PopoverTrigger asChild>
                   <Button
                     data-ocid="invoice.invoice_date.input"
@@ -520,7 +527,15 @@ export default function InvoicesTab() {
                   <Calendar
                     mode="single"
                     selected={invoiceDate}
-                    onSelect={(date) => date && setInvoiceDate(date)}
+                    onSelect={(date) => {
+                      if (date) {
+                        setInvoiceDate(date);
+                        setInvoiceDatePopoverOpen(false);
+                      }
+                    }}
+                    captionLayout="dropdown"
+                    fromYear={2020}
+                    toYear={new Date().getFullYear()}
                     initialFocus
                   />
                 </PopoverContent>
@@ -829,7 +844,10 @@ export default function InvoicesTab() {
                   {/* Payment Date Picker */}
                   <div className="space-y-2">
                     <Label>Payment Date</Label>
-                    <Popover>
+                    <Popover
+                      open={paymentDatePopoverOpen}
+                      onOpenChange={setPaymentDatePopoverOpen}
+                    >
                       <PopoverTrigger asChild>
                         <Button
                           data-ocid="invoice.payment_date.input"
@@ -844,7 +862,15 @@ export default function InvoicesTab() {
                         <Calendar
                           mode="single"
                           selected={paymentDate}
-                          onSelect={(date) => date && setPaymentDate(date)}
+                          onSelect={(date) => {
+                            if (date) {
+                              setPaymentDate(date);
+                              setPaymentDatePopoverOpen(false);
+                            }
+                          }}
+                          captionLayout="dropdown"
+                          fromYear={2020}
+                          toYear={new Date().getFullYear()}
                           initialFocus
                         />
                       </PopoverContent>
